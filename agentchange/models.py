@@ -41,6 +41,7 @@ class NormalizedEvent(BaseModel):
     tool_use_id: str | None = None
     command: str | None = None
     exit_code: int | None = None
+    duration_ms: int | None = None
     path: str | None = None
     result_status: Literal["succeeded", "failed", "unknown", "not_applicable"]
     evidence_confidence: Literal["observed", "inferred", "reported", "unknown"]

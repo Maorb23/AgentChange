@@ -2,53 +2,85 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
 from .models import EventType, NormalizedEvent
 
-_TEXT_EXIT_CODE = re.compile(
-    r"(?im)(?:process\s+)?exit(?:ed)?\s+(?:with\s+)?code\s*[:=]?\s*(-?\d+)\b"
-)
+_RESULT_PREFIX = "__AGENTCHANGE_RESULT__="
 _PATCH_PATH = re.compile(r"(?m)^\*\*\* (?:Add|Update|Delete) File:\s*(.+?)\s*$")
 
 
-def _structured_exit_code(response: Any) -> int | None:
-    if not isinstance(response, dict):
-        return None
-    for key in ("exit_code", "exitCode"):
-        value = response.get(key)
-        if isinstance(value, int) and not isinstance(value, bool):
-            return value
-    for value in response.values():
-        result = _structured_exit_code(value)
-        if result is not None:
-            return result
-    return None
-
-
-def _text_from_response(response: Any) -> str | None:
+def _response_texts(response: Any) -> list[str]:
     if isinstance(response, str):
-        return response
+        return [response]
     if isinstance(response, dict):
-        for key in ("output", "text", "content", "stderr", "stdout"):
-            value = response.get(key)
-            if isinstance(value, str):
-                return value
-    return None
+        texts: list[str] = []
+        for value in response.values():
+            texts.extend(_response_texts(value))
+        return texts
+    if isinstance(response, list):
+        texts = []
+        for value in response:
+            texts.extend(_response_texts(value))
+        return texts
+    return []
 
 
-def _command_result(response: Any) -> tuple[int | None, str, str]:
-    structured = _structured_exit_code(response)
-    if structured is not None:
-        return structured, ("succeeded" if structured == 0 else "failed"), "observed"
-    text = _text_from_response(response)
-    if text:
-        match = _TEXT_EXIT_CODE.search(text)
-        if match:
-            code = int(match.group(1))
-            return code, ("succeeded" if code == 0 else "failed"), "inferred"
-    return None, "unknown", "unknown"
+def _parse_marker(line: str) -> tuple[int, int] | None:
+    stripped = line.strip()
+    if not stripped.startswith(_RESULT_PREFIX):
+        return None
+    try:
+        value = json.loads(stripped.removeprefix(_RESULT_PREFIX))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(value, dict) or value.get("schema_version") != "1":
+        return None
+    exit_code = value.get("exit_code")
+    duration_ms = value.get("duration_ms")
+    if not isinstance(exit_code, int) or isinstance(exit_code, bool):
+        return None
+    if not isinstance(duration_ms, int) or isinstance(duration_ms, bool) or duration_ms < 0:
+        return None
+    return exit_code, duration_ms
+
+
+def _command_result(response: Any) -> tuple[int | None, int | None, str, str, list[str]]:
+    texts = _response_texts(response)
+    marker_like_lines: list[str] = []
+    valid_markers: list[tuple[int, int, bool]] = []
+    for text in texts:
+        nonempty_lines = [line for line in text.splitlines() if line.strip()]
+        for index, line in enumerate(nonempty_lines):
+            if _RESULT_PREFIX not in line:
+                continue
+            marker_like_lines.append(line)
+            parsed = _parse_marker(line)
+            if parsed is not None:
+                valid_markers.append((*parsed, index == len(nonempty_lines) - 1))
+
+    if not marker_like_lines:
+        return None, None, "unknown", "unknown", []
+    if len(valid_markers) > 1:
+        return None, None, "unknown", "unknown", ["duplicate valid AgentChange result markers"]
+    if not valid_markers:
+        return None, None, "unknown", "unknown", ["malformed AgentChange result marker"]
+
+    exit_code, duration_ms, is_final = valid_markers[0]
+    if not is_final:
+        return None, None, "unknown", "unknown", ["AgentChange result marker was not final"]
+    warnings = []
+    if len(marker_like_lines) > 1:
+        warnings.append("ignored malformed marker-like output before final result")
+    return (
+        exit_code,
+        duration_ms,
+        "succeeded" if exit_code == 0 else "failed",
+        "observed",
+        warnings,
+    )
 
 
 def normalize_envelope(envelope: dict[str, Any]) -> NormalizedEvent:
@@ -67,6 +99,7 @@ def normalize_envelope(envelope: dict[str, Any]) -> NormalizedEvent:
     result_status = "not_applicable"
     confidence = "observed"
     exit_code = None
+    duration_ms = None
     path = None
     details: dict[str, Any] = {"permission_mode": payload.get("permission_mode")}
 
@@ -95,7 +128,11 @@ def normalize_envelope(envelope: dict[str, Any]) -> NormalizedEvent:
         if tool_name == "Bash":
             event_type = EventType.COMMAND_COMPLETED if completed else EventType.COMMAND_ATTEMPTED
             if completed:
-                exit_code, result_status, confidence = _command_result(payload.get("tool_response"))
+                exit_code, duration_ms, result_status, confidence, warnings = _command_result(
+                    payload.get("tool_response")
+                )
+                if warnings:
+                    details["normalization_warnings"] = warnings
         elif tool_name == "apply_patch":
             event_type = EventType.FILE_CHANGE_COMPLETED if completed else EventType.FILE_CHANGE_ATTEMPTED
             paths = _PATCH_PATH.findall(command or "")
@@ -125,6 +162,7 @@ def normalize_envelope(envelope: dict[str, Any]) -> NormalizedEvent:
         tool_use_id=payload.get("tool_use_id") if isinstance(payload.get("tool_use_id"), str) else None,
         command=command,
         exit_code=exit_code,
+        duration_ms=duration_ms,
         path=path,
         result_status=result_status,
         evidence_confidence=confidence,

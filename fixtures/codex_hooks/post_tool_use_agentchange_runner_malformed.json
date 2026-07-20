@@ -1,0 +1,9 @@
+{
+  "_fixture": {"origin": "synthetic edge case"},
+  "session_id": "runner-session-sanitized",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_use_id": "tool-runner-malformed",
+  "tool_input": {"command": "agentchange-run -- pytest -q"},
+  "tool_response": "__AGENTCHANGE_RESULT__={not-json}"
+}

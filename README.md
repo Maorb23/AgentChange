@@ -4,6 +4,22 @@ AgentChange records activity observed through supported Codex lifecycle hooks. P
 
 It is not complete, tamper-proof, a full audit trail, or a secure enforcement boundary. It does not block tools, rewrite inputs, decide permissions, inspect Git, score risk, generate receipts, or send Slack messages.
 
+## Independently observed validation
+
+Normal Bash hook responses do not reliably contain process exit codes. Silent successful and failed commands can look identical, and nonempty stdout does not prove success. AgentChange therefore keeps ordinary Bash results `unknown` unless the response contains explicit reliable status information.
+
+For non-interactive tests, linters, builds, type checks, and security scans, use the standard-library runner:
+
+```bash
+agentchange-run -- pytest -q
+agentchange-run -- ruff check .
+agentchange-run -- npm test
+```
+
+The runner executes an argument array without a shell, preserves child stdout and stderr, emits a final `__AGENTCHANGE_RESULT__` JSON marker, and exits with the child exit code. Do not use it for interactive commands. Ordinary read-only commands such as `ls`, `cat`, `sed`, and `git status` do not need the wrapper.
+
+Validation results are considered independently observed only when executed through `agentchange-run` or when another supported tool provides an explicit reliable result.
+
 ## Evidence labels
 
 - **Observed:** directly present in a supported hook payload, such as a command, tool response, prompt, or Stop event.
@@ -54,8 +70,11 @@ The installer copies the plugin to the documented personal source at `~/plugins/
 
 ```powershell
 python scripts\install_local.py
+python -m pip install "$HOME\plugins\agentchange"
 codex plugin add agentchange@personal
 ```
+
+The Python installation must place `agentchange-run` on the PATH visible to Codex. If using `uv tool install`, choose a tool directory and Python interpreter readable inside the Codex sandbox; an AppData-managed interpreter may be inaccessible on managed Windows hosts.
 
 Start a new Codex session after installation. Open `/hooks`, inspect the source and exact commands, then trust the AgentChange hooks. Hooks do not run merely because the plugin was installed or enabled.
 
@@ -84,4 +103,4 @@ The output is `examples/sample_session.jsonl`; it is regenerated through product
 
 AgentChange records activity observed through supported Codex lifecycle hooks. Hosted tools, specialized tool paths, actions outside Codex, and activity while hooks are disabled or failing may not be captured.
 
-`PermissionRequest` shows that approval was requested, not the final human decision. `PostToolUse.tool_response` is tool-specific, so an exit code remains unknown unless a supported structured field or unambiguous textual form is present. Local files can be modified, and hook evidence is not remote attestation.
+`PermissionRequest` shows that approval was requested, not the final human decision. `PostToolUse.tool_response` is tool-specific, so ordinary Bash results remain unknown unless a valid final AgentChange result marker is present. Malformed, duplicate, or non-final markers produce a normalization warning and remain unknown. Local files can be modified, and hook evidence is not remote attestation.

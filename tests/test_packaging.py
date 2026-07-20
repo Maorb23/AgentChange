@@ -24,6 +24,9 @@ def test_manifest_and_hook_configuration_are_valid():
                 assert "${PLUGIN_ROOT}" in handler["command"]
                 assert handler["timeout"] == 10
 
+    project = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert 'agentchange-run = "agentchange.command_runner:main"' in project
+
 
 def test_skill_frontmatter_and_runtime_data_contract():
     skill = Path("skills/agentchange/SKILL.md").read_text(encoding="utf-8")

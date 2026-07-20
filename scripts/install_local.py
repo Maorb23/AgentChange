@@ -58,6 +58,7 @@ def main() -> int:
     marketplace_name = update_marketplace()
     print(f"Installed source at {TARGET}")
     print(f"Registered in {MARKETPLACE} as {PLUGIN_NAME}@{marketplace_name}")
+    print(f"Install the runner: python -m pip install {TARGET}")
     print(f"Next: codex plugin add {PLUGIN_NAME}@{marketplace_name}")
     return 0
 

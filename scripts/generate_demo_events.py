@@ -21,18 +21,25 @@ def load(name: str) -> dict:
 def generate(plugin_data: Path, output: Path) -> list:
     lint_pre = load("pre_tool_use_bash.json")
     lint_pre["tool_use_id"] = "tool-lint-001"
-    lint_pre["tool_input"]["command"] = "python -m ruff check ."
-    lint_post = load("post_tool_use_bash_success.json")
+    lint_pre["tool_input"]["command"] = "agentchange-run -- ruff check ."
+    lint_post = load("post_tool_use_agentchange_runner_success.json")
+    lint_post["session_id"] = "demo-session-001"
+    lint_post["turn_id"] = "turn-001"
     lint_post["tool_use_id"] = "tool-lint-001"
-    lint_post["tool_input"]["command"] = "python -m ruff check ."
+    lint_post["tool_input"]["command"] = "agentchange-run -- ruff check ."
     test_pre = load("pre_tool_use_bash.json")
     test_pre["turn_id"] = "turn-002"
     test_pre["tool_use_id"] = "tool-test-001"
-    test_pre["tool_input"]["command"] = "python -m pytest -q"
-    test_post = load("post_tool_use_bash_failed.json")
+    test_pre["tool_input"]["command"] = "agentchange-run -- pytest -q"
+    test_post = load("post_tool_use_agentchange_runner_failed.json")
+    test_post["session_id"] = "demo-session-001"
+    test_post["turn_id"] = "turn-002"
     test_post["tool_use_id"] = "tool-test-001"
-    test_post["tool_input"]["command"] = "python -m pytest -q"
-    test_post["tool_response"]["stderr"] = "1 failed, 12 passed"
+    test_post["tool_input"]["command"] = "agentchange-run -- pytest -q"
+    test_post["tool_response"] = (
+        "1 failed, 12 passed\n"
+        "__AGENTCHANGE_RESULT__={\"schema_version\":\"1\",\"exit_code\":1,\"duration_ms\":51}"
+    )
 
     payloads = [
         load("session_start.json"),

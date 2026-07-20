@@ -41,7 +41,7 @@ def test_fixture_mode_uses_capture_then_prints_normalized_event(tmp_path):
             "agentchange.hook_entry",
             "capture",
             "--fixture",
-            "fixtures/codex_hooks/post_tool_use_bash_failed.json",
+            "fixtures/codex_hooks/post_tool_use_agentchange_runner_failed.json",
             "--plugin-data",
             str(tmp_path),
         ],

@@ -14,7 +14,7 @@ def normalized(name, tmp_path):
     return normalize_envelope(capture_payload(fixture(name), tmp_path))
 
 
-def test_bash_attempt_success_failure_and_unknown(tmp_path):
+def test_bash_attempt_and_unwrapped_results_remain_unknown(tmp_path):
     attempted = normalized("pre_tool_use_bash.json", tmp_path)
     success = normalized("post_tool_use_bash_success.json", tmp_path)
     failure = normalized("post_tool_use_bash_failed.json", tmp_path)
@@ -23,16 +23,62 @@ def test_bash_attempt_success_failure_and_unknown(tmp_path):
     unknown = normalize_envelope(capture_payload(unknown_payload, tmp_path))
     assert attempted.event_type == EventType.COMMAND_ATTEMPTED
     assert attempted.result_status == "not_applicable"
-    assert (success.exit_code, success.result_status, success.evidence_confidence) == (0, "succeeded", "observed")
-    assert (failure.exit_code, failure.result_status, failure.evidence_confidence) == (1, "failed", "observed")
+    assert (success.exit_code, success.result_status, success.evidence_confidence) == (None, "unknown", "unknown")
+    assert (failure.exit_code, failure.result_status, failure.evidence_confidence) == (None, "unknown", "unknown")
     assert (unknown.exit_code, unknown.result_status, unknown.evidence_confidence) == (None, "unknown", "unknown")
 
 
-def test_text_exit_code_is_inferred(tmp_path):
+def test_plain_text_exit_code_without_runner_marker_is_unknown(tmp_path):
     value = fixture("post_tool_use_bash_failed.json")
     value["tool_response"] = "Process exited with code 7"
     event = normalize_envelope(capture_payload(value, tmp_path))
-    assert (event.exit_code, event.result_status, event.evidence_confidence) == (7, "failed", "inferred")
+    assert (event.exit_code, event.result_status, event.evidence_confidence) == (None, "unknown", "unknown")
+
+
+def test_silent_live_bash_responses_are_unknown(tmp_path):
+    success = normalized("post_tool_use_bash_silent_success.json", tmp_path)
+    failure = normalized("post_tool_use_bash_silent_failed.json", tmp_path)
+    assert (success.exit_code, success.result_status) == (None, "unknown")
+    assert (failure.exit_code, failure.result_status) == (None, "unknown")
+
+
+def test_valid_runner_markers_are_observed(tmp_path):
+    success = normalized("post_tool_use_agentchange_runner_success.json", tmp_path)
+    failure = normalized("post_tool_use_agentchange_runner_failed.json", tmp_path)
+    assert (
+        success.exit_code,
+        success.duration_ms,
+        success.result_status,
+        success.evidence_confidence,
+    ) == (0, 42, "succeeded", "observed")
+    assert (
+        failure.exit_code,
+        failure.duration_ms,
+        failure.result_status,
+        failure.evidence_confidence,
+    ) == (1, 51, "failed", "observed")
+
+
+def test_malformed_marker_warns_and_remains_unknown(tmp_path):
+    event = normalized("post_tool_use_agentchange_runner_malformed.json", tmp_path)
+    assert (event.exit_code, event.duration_ms, event.result_status) == (None, None, "unknown")
+    assert event.details["normalization_warnings"] == ["malformed AgentChange result marker"]
+
+
+def test_misleading_lines_do_not_override_valid_final_marker(tmp_path):
+    event = normalized("post_tool_use_agentchange_runner_misleading.json", tmp_path)
+    assert (event.exit_code, event.duration_ms, event.result_status) == (0, 88, "succeeded")
+    assert event.details["normalization_warnings"] == [
+        "ignored malformed marker-like output before final result"
+    ]
+
+
+def test_duplicate_valid_markers_warn_and_remain_unknown(tmp_path):
+    value = fixture("post_tool_use_agentchange_runner_success.json")
+    value["tool_response"] = value["tool_response"] + "\n" + value["tool_response"]
+    event = normalize_envelope(capture_payload(value, tmp_path))
+    assert (event.exit_code, event.duration_ms, event.result_status) == (None, None, "unknown")
+    assert event.details["normalization_warnings"] == ["duplicate valid AgentChange result markers"]
 
 
 def test_patch_mcp_permission_prompt_and_stop(tmp_path):

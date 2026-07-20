@@ -9,6 +9,9 @@ description = "Evidence capture for supported Codex lifecycle hooks"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2.7,<3"]
 
+[project.scripts]
+agentchange-run = "agentchange.command_runner:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=8,<9"]
 
