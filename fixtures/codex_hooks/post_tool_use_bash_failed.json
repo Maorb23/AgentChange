@@ -1,0 +1,14 @@
+{
+  "_fixture": {"origin": "synthetic edge case"},
+  "session_id": "demo-session-001",
+  "transcript_path": null,
+  "cwd": "/workspace/agentchange-demo",
+  "hook_event_name": "PostToolUse",
+  "model": "gpt-5.6",
+  "permission_mode": "default",
+  "turn_id": "turn-002",
+  "tool_name": "Bash",
+  "tool_use_id": "tool-bash-002",
+  "tool_input": {"command": "python -c \"raise SystemExit(1)\""},
+  "tool_response": {"exit_code": 1, "stdout": "", "stderr": ""}
+}

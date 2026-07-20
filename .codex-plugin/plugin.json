@@ -1,0 +1,21 @@
+{
+  "name": "agentchange",
+  "version": "0.1.0",
+  "description": "Records activity observed through supported Codex lifecycle hooks.",
+  "author": {
+    "name": "AgentChange"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AgentChange",
+    "shortDescription": "Local evidence capture for Codex coding tasks",
+    "longDescription": "Records sanitized activity observed through supported Codex lifecycle hooks into per-session local JSONL evidence.",
+    "developerName": "AgentChange",
+    "category": "Developer Tools",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": [
+      "Use AgentChange while implementing and validating this coding task.",
+      "Record supported Codex lifecycle evidence for this repository change."
+    ]
+  }
+}

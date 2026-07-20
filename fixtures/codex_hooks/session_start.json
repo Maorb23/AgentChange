@@ -1,0 +1,12 @@
+{
+  "_fixture": {
+    "origin": "documentation-based"
+  },
+  "session_id": "demo-session-001",
+  "transcript_path": null,
+  "cwd": "/workspace/agentchange-demo",
+  "hook_event_name": "SessionStart",
+  "model": "gpt-5.6",
+  "permission_mode": "default",
+  "source": "startup"
+}

@@ -1,0 +1,11 @@
+{
+  "_fixture": {"origin": "documentation-based"},
+  "session_id": "demo-session-001",
+  "transcript_path": null,
+  "cwd": "/workspace/agentchange-demo",
+  "hook_event_name": "UserPromptSubmit",
+  "model": "gpt-5.6",
+  "permission_mode": "default",
+  "turn_id": "turn-001",
+  "prompt": "Add password-reset rate limiting and validate it."
+}

@@ -1,0 +1,5 @@
+{
+  "_fixture": {"origin": "synthetic edge case"},
+  "session_id": "minimal-session",
+  "hook_event_name": "Stop"
+}

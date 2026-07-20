@@ -1,0 +1,12 @@
+{
+  "_fixture": {"origin": "documentation-based"},
+  "session_id": "demo-session-001",
+  "transcript_path": null,
+  "cwd": "/workspace/agentchange-demo",
+  "hook_event_name": "Stop",
+  "model": "gpt-5.6",
+  "permission_mode": "default",
+  "turn_id": "turn-001",
+  "stop_hook_active": false,
+  "last_assistant_message": "Implemented password-reset rate limiting. All tests pass."
+}

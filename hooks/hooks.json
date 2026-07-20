@@ -1,0 +1,86 @@
+{
+  "description": "Passive AgentChange lifecycle evidence capture.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "commandWindows": "python \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "timeout": 10,
+            "statusMessage": "Recording AgentChange session start"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "commandWindows": "python \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "timeout": 10,
+            "statusMessage": "Recording AgentChange tool attempt"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "commandWindows": "python \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "timeout": 10,
+            "statusMessage": "Recording AgentChange tool result"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "commandWindows": "python \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "timeout": 10,
+            "statusMessage": "Recording AgentChange user prompt"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "commandWindows": "python \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "timeout": 10,
+            "statusMessage": "Recording AgentChange permission request"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "commandWindows": "python \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "timeout": 10,
+            "statusMessage": "Recording AgentChange turn stop"
+          }
+        ]
+      }
+    ]
+  }
+}

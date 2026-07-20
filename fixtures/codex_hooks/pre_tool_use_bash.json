@@ -1,0 +1,13 @@
+{
+  "_fixture": {"origin": "documentation-based"},
+  "session_id": "demo-session-001",
+  "transcript_path": null,
+  "cwd": "/workspace/agentchange-demo",
+  "hook_event_name": "PreToolUse",
+  "model": "gpt-5.6",
+  "permission_mode": "default",
+  "turn_id": "turn-001",
+  "tool_name": "Bash",
+  "tool_use_id": "tool-bash-001",
+  "tool_input": {"command": "python -c \"raise SystemExit(0)\""}
+}
