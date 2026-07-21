@@ -47,7 +47,9 @@ def _parse_marker(line: str) -> tuple[int, int] | None:
     return exit_code, duration_ms
 
 
-def _command_result(response: Any) -> tuple[int | None, int | None, str, str, list[str]]:
+def _command_result(command: str | None, response: Any) -> tuple[int | None, int | None, str, str, list[str]]:
+    if not command or not re.search(r"(?:^|[\\/\s])agentchange-run(?:\.exe)?\s+--(?:\s|$)", command):
+        return None, None, "unknown", "unknown", []
     texts = _response_texts(response)
     marker_like_lines: list[str] = []
     valid_markers: list[tuple[int, int, bool]] = []
@@ -129,7 +131,10 @@ def normalize_envelope(envelope: dict[str, Any]) -> NormalizedEvent:
             event_type = EventType.COMMAND_COMPLETED if completed else EventType.COMMAND_ATTEMPTED
             if completed:
                 exit_code, duration_ms, result_status, confidence, warnings = _command_result(
-                    payload.get("tool_response")
+                    command, payload.get("tool_response")
+                )
+                details["result_source"] = (
+                    "agentchange-run final marker" if confidence == "observed" else "not authoritative"
                 )
                 if warnings:
                     details["normalization_warnings"] = warnings
@@ -172,4 +177,5 @@ def normalize_envelope(envelope: dict[str, Any]) -> NormalizedEvent:
             else None
         ),
         details=details,
+        line_number=envelope.get("_line_number") if isinstance(envelope.get("_line_number"), int) else None,
     )

@@ -26,6 +26,7 @@ def test_manifest_and_hook_configuration_are_valid():
 
     project = Path("pyproject.toml").read_text(encoding="utf-8")
     assert 'agentchange-run = "agentchange.command_runner:main"' in project
+    assert 'agentchange-hook = "agentchange.hook_entry:main"' in project
 
 
 def test_skill_frontmatter_and_runtime_data_contract():

@@ -47,6 +47,7 @@ class NormalizedEvent(BaseModel):
     evidence_confidence: Literal["observed", "inferred", "reported", "unknown"]
     last_assistant_message: str | None = None
     details: dict[str, Any] = Field(default_factory=dict)
+    line_number: int | None = None
 
     @field_validator("timestamp")
     @classmethod
@@ -54,3 +55,45 @@ class NormalizedEvent(BaseModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("timestamp must include a UTC offset")
         return value
+
+
+class ValidationRecord(BaseModel):
+    validation_id: str
+    tool_use_id: str | None = None
+    category: Literal["test", "lint", "build", "type_check", "security", "other"]
+    command: str
+    status: Literal["passed", "failed", "unknown"]
+    authoritative: bool
+    result_source: str
+    exit_code: int | None = None
+    duration_ms: int | None = None
+    attempted_event_id: str | None = None
+    completed_event_id: str
+    line_number: int
+    timestamp: datetime
+
+
+class Finding(BaseModel):
+    code: str
+    severity: Literal["info", "low", "medium", "high", "critical"]
+    summary: str
+    evidence: list[str] = Field(default_factory=list)
+
+
+class Receipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["1"] = "1"
+    receipt_id: str
+    session_id: str
+    turn_id: str
+    generated_at: datetime
+    source_labels: dict[str, str]
+    agent_statement: dict[str, Any]
+    validation: dict[str, Any]
+    repository: dict[str, Any]
+    findings: list[Finding]
+    risk: dict[str, Any]
+    limitations: list[str]
+    event_summary: dict[str, Any]
+    integrity: dict[str, Any]

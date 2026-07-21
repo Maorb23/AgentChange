@@ -56,6 +56,14 @@ def derive_session_key(session_id: str) -> str:
     return f"{readable}-{digest}"
 
 
+def derive_turn_key(turn_id: str) -> str:
+    readable = re.sub(r"[^a-zA-Z0-9._-]+", "-", turn_id).strip("-._")
+    readable = re.sub(r"\.{2,}", "-", readable)
+    readable = (readable or "turn")[:40]
+    digest = hashlib.sha256(turn_id.encode("utf-8")).hexdigest()[:16]
+    return f"{readable}-{digest}"
+
+
 def _is_sensitive_key(key: object) -> bool:
     normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
     return any(part in normalized for part in _SENSITIVE_PARTS)
@@ -67,7 +75,13 @@ def _sanitize_string(value: str) -> str:
     value = _ASSIGNMENT_SECRET.sub(lambda match: f"{match.group(1)}={REDACTED_VALUE}", value)
     if len(value) > MAX_STRING_LENGTH:
         original_length = len(value)
-        value = value[:MAX_STRING_LENGTH] + f"\n[TRUNCATED: original length {original_length}]"
+        head_length = MAX_STRING_LENGTH // 2
+        tail_length = MAX_STRING_LENGTH - head_length
+        value = (
+            value[:head_length]
+            + f"\n[TRUNCATED: original length {original_length}]\n"
+            + value[-tail_length:]
+        )
     return value
 
 

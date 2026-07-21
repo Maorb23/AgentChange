@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import argparse
 from pathlib import Path
 
 PLUGIN_NAME = "agentchange"
@@ -54,10 +55,17 @@ def update_marketplace() -> str:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--copy-only", action="store_true", help="update an existing personal plugin source without rewriting its marketplace entry")
+    args = parser.parse_args()
     copy_source()
-    marketplace_name = update_marketplace()
     print(f"Installed source at {TARGET}")
-    print(f"Registered in {MARKETPLACE} as {PLUGIN_NAME}@{marketplace_name}")
+    if args.copy_only:
+        print("Preserved the existing marketplace entry (--copy-only).")
+        marketplace_name = "<existing-marketplace>"
+    else:
+        marketplace_name = update_marketplace()
+        print(f"Registered in {MARKETPLACE} as {PLUGIN_NAME}@{marketplace_name}")
     print(f"Install the runner: python -m pip install {TARGET}")
     print(f"Next: codex plugin add {PLUGIN_NAME}@{marketplace_name}")
     return 0

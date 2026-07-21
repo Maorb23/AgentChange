@@ -16,7 +16,7 @@ AgentChange records activity observed through supported Codex lifecycle hooks. T
 3. Never claim tests passed unless a successful result was observed.
 4. State failures and unresolved issues honestly.
 5. At the end, summarize the requested task, important changes, validation performed, known failures, assumptions, and suggested reviewers.
-6. Do not manually send a receipt; lifecycle hooks handle future finalization.
+6. Do not manually send a receipt; the Stop hook creates the per-turn local receipt and handles configured Slack delivery.
 7. Do not modify AgentChange runtime evidence files under `PLUGIN_DATA`.
 
 Validation results are considered independently observed only when executed through `agentchange-run` or when another supported tool provides an explicit reliable result.

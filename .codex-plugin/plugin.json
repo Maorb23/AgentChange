@@ -1,15 +1,15 @@
 {
   "name": "agentchange",
   "version": "0.1.0",
-  "description": "Records activity observed through supported Codex lifecycle hooks.",
+  "description": "Creates per-turn evidence-backed Codex change receipts.",
   "author": {
     "name": "AgentChange"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "AgentChange",
-    "shortDescription": "Local evidence capture for Codex coding tasks",
-    "longDescription": "Records sanitized activity observed through supported Codex lifecycle hooks into per-session local JSONL evidence.",
+    "shortDescription": "Evidence-backed Codex change receipts",
+    "longDescription": "Records supported lifecycle evidence, compares same-turn validation with Codex claims, inspects local Git state, and creates per-turn JSON and Markdown receipts with optional Slack delivery.",
     "developerName": "AgentChange",
     "category": "Developer Tools",
     "capabilities": ["Read", "Write"],

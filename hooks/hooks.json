@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
-            "commandWindows": "python \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "command": "agentchange-hook capture --plugin-root \"${PLUGIN_ROOT}\"",
+            "commandWindows": "agentchange-hook capture --plugin-root \"${PLUGIN_ROOT}\"",
             "timeout": 10,
             "statusMessage": "Recording AgentChange session start"
           }
@@ -20,8 +20,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
-            "commandWindows": "python \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "command": "agentchange-hook capture --plugin-root \"${PLUGIN_ROOT}\"",
+            "commandWindows": "agentchange-hook capture --plugin-root \"${PLUGIN_ROOT}\"",
             "timeout": 10,
             "statusMessage": "Recording AgentChange tool attempt"
           }
@@ -34,8 +34,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
-            "commandWindows": "python \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "command": "agentchange-hook capture --plugin-root \"${PLUGIN_ROOT}\"",
+            "commandWindows": "agentchange-hook capture --plugin-root \"${PLUGIN_ROOT}\"",
             "timeout": 10,
             "statusMessage": "Recording AgentChange tool result"
           }
@@ -47,8 +47,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
-            "commandWindows": "python \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "command": "agentchange-hook capture --plugin-root \"${PLUGIN_ROOT}\"",
+            "commandWindows": "agentchange-hook capture --plugin-root \"${PLUGIN_ROOT}\"",
             "timeout": 10,
             "statusMessage": "Recording AgentChange user prompt"
           }
@@ -61,8 +61,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
-            "commandWindows": "python \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "command": "agentchange-hook capture --plugin-root \"${PLUGIN_ROOT}\"",
+            "commandWindows": "agentchange-hook capture --plugin-root \"${PLUGIN_ROOT}\"",
             "timeout": 10,
             "statusMessage": "Recording AgentChange permission request"
           }
@@ -74,10 +74,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
-            "commandWindows": "python \"${PLUGIN_ROOT}/agentchange/hook_entry.py\" capture",
+            "command": "agentchange-hook finalize --plugin-root \"${PLUGIN_ROOT}\"",
+            "commandWindows": "agentchange-hook finalize --plugin-root \"${PLUGIN_ROOT}\"",
             "timeout": 10,
-            "statusMessage": "Recording AgentChange turn stop"
+            "statusMessage": "Finalizing AgentChange turn receipt"
           }
         ]
       }

@@ -5,12 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agentchange"
 version = "0.1.0"
-description = "Evidence capture for supported Codex lifecycle hooks"
+description = "Per-turn evidence-backed change receipts for Codex"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2.7,<3"]
 
 [project.scripts]
 agentchange-run = "agentchange.command_runner:main"
+agentchange-hook = "agentchange.hook_entry:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<9"]

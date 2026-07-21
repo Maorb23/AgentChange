@@ -8,11 +8,8 @@ import os
 import sys
 from pathlib import Path
 
-if __package__:
-    from .raw_capture import CaptureError, capture_payload
-else:
+if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from agentchange.raw_capture import CaptureError, capture_payload
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -21,11 +18,26 @@ def _parser() -> argparse.ArgumentParser:
     capture = subparsers.add_parser("capture")
     capture.add_argument("--fixture", type=Path)
     capture.add_argument("--plugin-data", type=Path)
+    capture.add_argument("--plugin-root", type=Path)
+    finalize = subparsers.add_parser("finalize")
+    finalize.add_argument("--fixture", type=Path)
+    finalize.add_argument("--plugin-data", type=Path)
+    finalize.add_argument("--plugin-root", type=Path)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.plugin_root and not (args.plugin_root / ".codex-plugin" / "plugin.json").is_file():
+        print("AgentChange hook received an invalid PLUGIN_ROOT", file=sys.stderr)
+        return 1
+    if args.plugin_root:
+        import agentchange as agentchange_package
+
+        source_package = str((args.plugin_root / "agentchange").resolve())
+        if source_package not in agentchange_package.__path__:
+            agentchange_package.__path__.insert(0, source_package)
+    from agentchange.raw_capture import CaptureError, capture_payload
     try:
         raw = args.fixture.read_text(encoding="utf-8") if args.fixture else sys.stdin.read()
         payload = json.loads(raw)
@@ -38,7 +50,28 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, json.JSONDecodeError, CaptureError) as exc:
         print(f"AgentChange capture failed: {exc}", file=sys.stderr)
         return 1
-    if args.fixture:
+    if payload.get("hook_event_name") in {"UserPromptSubmit", "PreToolUse"}:
+        turn_id = payload.get("turn_id")
+        cwd = payload.get("cwd")
+        if isinstance(turn_id, str) and turn_id and isinstance(cwd, str) and cwd:
+            try:
+                from agentchange.git_analysis import ensure_git_baseline
+
+                ensure_git_baseline(Path(plugin_data), envelope["session_id"], turn_id, cwd)
+            except Exception as exc:
+                print(f"AgentChange baseline capture failed after raw capture: {exc}", file=sys.stderr)
+
+    if args.action == "finalize":
+        try:
+            from agentchange.finalizer import finalize_turn
+
+            receipt = finalize_turn(Path(plugin_data), payload)
+        except Exception as exc:
+            print(f"AgentChange finalization failed after raw Stop capture: {exc}", file=sys.stderr)
+            print("{}")
+            return 0
+        print(json.dumps(receipt) if args.fixture else "{}")
+    elif args.fixture:
         try:
             from agentchange.normalize import normalize_envelope
 

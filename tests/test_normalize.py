@@ -2,7 +2,7 @@ import json
 
 from agentchange.models import EventType
 from agentchange.normalize import normalize_envelope
-from agentchange.raw_capture import capture_payload, derive_session_key
+from agentchange.raw_capture import MAX_STRING_LENGTH, capture_payload, derive_session_key
 from agentchange.recorder import normalize_session
 
 
@@ -50,13 +50,29 @@ def test_valid_runner_markers_are_observed(tmp_path):
         success.duration_ms,
         success.result_status,
         success.evidence_confidence,
-    ) == (0, 42, "succeeded", "observed")
+    ) == (0, 83, "succeeded", "observed")
     assert (
         failure.exit_code,
         failure.duration_ms,
         failure.result_status,
         failure.evidence_confidence,
-    ) == (1, 51, "failed", "observed")
+    ) == (1, 29, "failed", "observed")
+    assert success.details["result_source"] == "agentchange-run final marker"
+    assert failure.details["result_source"] == "agentchange-run final marker"
+
+
+def test_runner_marker_from_an_unwrapped_command_is_not_authoritative(tmp_path):
+    value = fixture("post_tool_use_agentchange_runner_success.json")
+    value["tool_input"]["command"] = "printf a-marker"
+    event = normalize_envelope(capture_payload(value, tmp_path))
+    assert (event.exit_code, event.result_status, event.evidence_confidence) == (None, "unknown", "unknown")
+
+
+def test_long_runner_output_keeps_the_final_authoritative_marker(tmp_path):
+    value = fixture("post_tool_use_agentchange_runner_success.json")
+    value["tool_response"] = "x" * (MAX_STRING_LENGTH + 1000) + "\n" + value["tool_response"]
+    event = normalize_envelope(capture_payload(value, tmp_path))
+    assert (event.exit_code, event.result_status, event.evidence_confidence) == (0, "succeeded", "observed")
 
 
 def test_malformed_marker_warns_and_remains_unknown(tmp_path):
