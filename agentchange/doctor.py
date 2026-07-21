@@ -10,7 +10,7 @@ from typing import Callable
 
 from .display import sanitize_text
 from .environment import PlatformInfo, detect_platform, detect_python, find_executable, git_root, python_has_module
-from .installer import VERSION, cached_plugin_roots, plugin_version, stop_hook_verified
+from .installer import VERSION, cached_plugin_roots, plugin_fingerprint, plugin_version, stop_hook_verified
 from .slack import connectivity_description, settings
 from .state import finalization_files, latest_receipt, plugin_data_directories
 
@@ -59,7 +59,7 @@ def collect_doctor(
         if which(executable):
             lines.append(f"✓ {label} installed")
         else:
-            lines.extend((f"✗ {label} unavailable", "Fix: Reinstall AgentChange 0.3.0 in your user environment."))
+            lines.extend((f"✗ {label} unavailable", f"Fix: Reinstall AgentChange {VERSION} in your user environment."))
             ready = False
     target = user_home / "plugins" / "agentchange"
     roots = cached_plugin_roots(user_home)
@@ -75,6 +75,11 @@ def collect_doctor(
     stale_versions = sorted({value for root in roots if (value := plugin_version(root)) and value != VERSION})
     if current_cache:
         lines.append(f"✓ Cached plugin {VERSION} verified")
+        if plugin_fingerprint(current_cache) == plugin_fingerprint(target):
+            lines.append("✓ Cached plugin fingerprint verified")
+        else:
+            lines.extend(("✗ Cached plugin content is stale", "Fix: Run `agentchange install`."))
+            ready = False
     else:
         detail = f"; stale versions: {', '.join(stale_versions)}" if stale_versions else ""
         lines.extend((f"✗ Cached plugin {VERSION} is unavailable{detail}", "Fix: Run `agentchange install`."))

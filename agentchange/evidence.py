@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 import shlex
 from pathlib import Path, PurePosixPath
@@ -42,8 +43,31 @@ def load_turn_events(events_path: Path, turn_id: str) -> tuple[list[NormalizedEv
     return events, errors
 
 
-def validation_category(command: str) -> str:
-    lowered = command.lower()
+def _command_parts(command: str | list[str]) -> list[str]:
+    if isinstance(command, list):
+        return command
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
+
+
+def validation_category(command: str | list[str]) -> str:
+    parts = _command_parts(command)
+    lowered = " ".join(parts).lower()
+    for index, part in enumerate(parts[:-1]):
+        if PurePosixPath(part.replace("\\", "/")).name.lower() != "manage.py":
+            continue
+        if index == 0 or not re.fullmatch(
+            r"python(?:\d+(?:\.\d+)*)?",
+            PurePosixPath(parts[index - 1].replace("\\", "/")).name.lower(),
+        ):
+            continue
+        action = parts[index + 1].lower()
+        if action == "check":
+            return "django_system_check"
+        if action == "test":
+            return "django_test"
     if re.search(r"\b(pytest|unittest|jest|vitest|mocha|go\s+test|cargo\s+test|npm\s+test|pnpm\s+test|yarn\s+test)\b", lowered):
         return "test"
     if re.search(r"\b(ruff|eslint|flake8|pylint|golangci-lint|cargo\s+clippy)\b", lowered):
@@ -73,7 +97,9 @@ def _command_tokens(command: str, marker: dict[str, Any], key: str) -> list[str]
     return tokens
 
 
-def validation_scope(tokens: list[str], category: str) -> str:
+def validation_scope(tokens: list[str], category: str, display: str | None = None) -> str:
+    if category in {"django_system_check", "django_test"}:
+        return sanitize_text(display or make_display_command(tokens))
     if category != "test":
         return "Selected command"
     pytest_index = next(
@@ -114,10 +140,10 @@ def _validation_status(
         return "command_not_found"
     if exit_code == 126 or marker.get("error_kind") == "permission_denied":
         return "infrastructure_error"
-    if category != "test":
+    if category not in {"test", "django_test"}:
         return "failed"
     text = json.dumps(response, ensure_ascii=False).lower()
-    if re.search(r"\b\d+\s+failed\b|=+\s*failures\s*=+|assertionerror", text):
+    if re.search(r"\b\d+\s+failed\b|=+\s*failures\s*=+|assertionerror|failed\s*\(.*failures?=|\bfail:", text):
         return "failed"
     if any(
         pattern in text
@@ -147,42 +173,51 @@ def extract_validations(events: list[NormalizedEvent]) -> list[ValidationRecord]
         category = validation_category(event.command)
         if category == "other" and "agentchange-run" not in event.command:
             continue
-        authoritative = event.evidence_confidence == "observed" and event.exit_code is not None
-        marker = event.details.get("runner_metadata")
-        marker = marker if isinstance(marker, dict) else {}
-        requested = _command_tokens(event.command, marker, "requested_command")
-        resolved = _command_tokens(event.command, marker, "resolved_command")
-        category = validation_category(" ".join(requested) or event.command)
-        status = _validation_status(
-            category,
-            authoritative,
-            event.exit_code,
-            event.details.get("tool_response"),
-            marker,
-        )
-        display = marker.get("display_command")
-        display = sanitize_text(display) if isinstance(display, str) else make_display_command(resolved)
-        records.append(
-            ValidationRecord(
-                validation_id=hashlib.sha256(f"{event.event_id}:validation".encode()).hexdigest()[:20],
-                tool_use_id=event.tool_use_id,
-                category=category,
-                command=event.command,
-                status=status,
-                authoritative=authoritative,
-                result_source=str(event.details.get("result_source", "not authoritative")),
-                requested_command=requested,
-                resolved_command=resolved,
-                display_command=display,
-                scope=validation_scope(requested or resolved, category),
-                exit_code=event.exit_code if authoritative else None,
-                duration_ms=event.duration_ms if authoritative else None,
-                attempted_event_id=attempts.get(event.tool_use_id).event_id if event.tool_use_id in attempts else None,
-                completed_event_id=event.event_id,
-                line_number=event.line_number or 0,
-                timestamp=event.timestamp,
+        runner_results = event.details.get("runner_results")
+        markers = [item for item in runner_results if isinstance(item, dict)] if isinstance(runner_results, list) else []
+        if not markers:
+            fallback = event.details.get("runner_metadata")
+            marker = dict(fallback) if isinstance(fallback, dict) else {}
+            if event.exit_code is not None:
+                marker.update({"exit_code": event.exit_code, "duration_ms": event.duration_ms})
+            markers = [marker]
+        for marker_index, marker in enumerate(markers):
+            marker_exit_code = marker.get("exit_code")
+            marker_duration = marker.get("duration_ms")
+            authoritative = event.evidence_confidence == "observed" and isinstance(marker_exit_code, int)
+            requested = _command_tokens(event.command, marker, "requested_command")
+            resolved = _command_tokens(event.command, marker, "resolved_command")
+            category = validation_category(requested or resolved or event.command)
+            status = _validation_status(
+                category,
+                authoritative,
+                marker_exit_code if isinstance(marker_exit_code, int) else None,
+                event.details.get("tool_response"),
+                marker,
             )
-        )
+            display = marker.get("display_command")
+            display = sanitize_text(display) if isinstance(display, str) else make_display_command(resolved)
+            records.append(
+                ValidationRecord(
+                    validation_id=hashlib.sha256(f"{event.event_id}:validation:{marker_index}".encode()).hexdigest()[:20],
+                    tool_use_id=event.tool_use_id,
+                    category=category,
+                    command=event.command,
+                    status=status,
+                    authoritative=authoritative,
+                    result_source=str(event.details.get("result_source", "not authoritative")),
+                    requested_command=requested,
+                    resolved_command=resolved,
+                    display_command=display,
+                    scope=validation_scope(requested or resolved, category, display),
+                    exit_code=marker_exit_code if authoritative else None,
+                    duration_ms=marker_duration if authoritative and isinstance(marker_duration, int) else None,
+                    attempted_event_id=attempts.get(event.tool_use_id).event_id if event.tool_use_id in attempts else None,
+                    completed_event_id=event.event_id,
+                    line_number=event.line_number or 0,
+                    timestamp=event.timestamp,
+                )
+            )
     return records
 
 
@@ -225,8 +260,9 @@ def analyze_turn(events: list[NormalizedEvent], attribution: dict[str, Any]) -> 
     claims = [category for category, pattern in _CLAIMS if statement and pattern.search(statement)]
     findings: list[Finding] = []
 
-    failed_categories = {record.category for record in validations if record.authoritative and record.status == "failed"}
-    passed_categories = {record.category for record in validations if record.authoritative and record.status == "passed"}
+    claim_category = lambda category: "test" if category == "django_test" else category
+    failed_categories = {claim_category(record.category) for record in validations if record.authoritative and record.status == "failed"}
+    passed_categories = {claim_category(record.category) for record in validations if record.authoritative and record.status == "passed"}
     uncertain = [record for record in validations if record.status in {"unknown", "command_not_found", "infrastructure_error"}]
     if "test" in failed_categories:
         findings.append(_finding("TESTS_FAILED", "high", "An authoritative same-turn test command failed."))
@@ -256,7 +292,7 @@ def analyze_turn(events: list[NormalizedEvent], attribution: dict[str, Any]) -> 
         findings.append(_finding("NEW_UNTRACKED_FILE", "medium", "New untracked files were observed at Stop.", new_untracked))
 
     substantive = [item["path"] for item in introduced if PurePosixPath(item["path"].lower()).suffix in _CODE_SUFFIXES]
-    if substantive and not any(record.category == "test" for record in validations):
+    if substantive and not any(record.category in {"test", "django_test"} for record in validations):
         findings.append(_finding("NO_TEST_EVIDENCE", "medium", "Substantive code changed without a captured same-turn test command.", substantive))
     if any(event.event_type.value.startswith("mcp_tool") for event in events):
         findings.append(_finding("EXTERNAL_OR_MCP_TOOL_USED", "low", "An MCP or external tool path was observed; its external side effects may not be represented in local Git."))
@@ -266,14 +302,38 @@ def analyze_turn(events: list[NormalizedEvent], attribution: dict[str, Any]) -> 
     if not stop_events:
         findings.append(_finding("SESSION_INCOMPLETE", "medium", "No same-turn Stop event was captured."))
 
-    observed_writes = {
-        str(path).replace("\\", "/")
+    repository_root = attribution.get("repository_root")
+
+    def repository_relative(path: Any) -> str | None:
+        normalized = posixpath.normpath(str(path).replace("\\", "/"))
+        if normalized.startswith("/"):
+            if not repository_root:
+                return None
+            root = posixpath.normpath(str(repository_root).replace("\\", "/"))
+            prefix = root.rstrip("/") + "/"
+            if normalized == root:
+                return "."
+            if not normalized.startswith(prefix):
+                return None
+            return normalized[len(prefix) :]
+        if normalized == ".." or normalized.startswith("../"):
+            return None
+        return normalized.removeprefix("./")
+
+    captured_writes = [
+        str(path)
         for event in events
         if event.event_type.value.startswith("file_change")
         for path in event.details.get("paths", [])
+    ]
+    observed_writes = {
+        relative
+        for path in captured_writes
+        if (relative := repository_relative(path)) is not None
     }
-    final_changed = {item["path"].replace("\\", "/") for item in classifications if item.get("final_status")}
-    missing_git = sorted(path for path in observed_writes if path not in final_changed)
+    outside_writes = [path for path in captured_writes if repository_relative(path) is None]
+    final_changed = {posixpath.normpath(item["path"].replace("\\", "/")) for item in classifications if item.get("final_status")}
+    missing_git = sorted(outside_writes + [path for path in observed_writes if path not in final_changed])
     missing_write = sorted(path for path in (item["path"] for item in introduced) if path.replace("\\", "/") not in observed_writes)
     if missing_git:
         findings.append(_finding("WRITE_NOT_REFLECTED_IN_GIT", "low", "A captured write path was not present in the final Git changes.", missing_git))

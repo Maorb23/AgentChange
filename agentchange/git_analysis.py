@@ -153,9 +153,11 @@ def ensure_git_baseline(plugin_data: Path, session_id: str, turn_id: str, cwd: s
 
 def classify_changes(baseline: dict[str, Any] | None, final: dict[str, Any]) -> dict[str, Any]:
     final_entries = {str(entry["path"]): entry for entry in final.get("entries", [])}
+    repository_root = final.get("repository_root") or (baseline or {}).get("repository_root")
     if not baseline or not baseline.get("available") or not final.get("available"):
         return {
             "available": False,
+            "repository_root": repository_root,
             "limitation": ATTRIBUTION_LIMITATION,
             "classifications": [
                 {"path": path, "classification": "Attribution unknown", "final_status": entry["status"]}
@@ -197,4 +199,9 @@ def classify_changes(baseline: dict[str, Any] | None, final: dict[str, Any]) -> 
                 "final_status": final_entries.get(path, {}).get("status"),
             }
         )
-    return {"available": True, "limitation": None, "classifications": classifications}
+    return {
+        "available": True,
+        "repository_root": repository_root,
+        "limitation": None,
+        "classifications": classifications,
+    }

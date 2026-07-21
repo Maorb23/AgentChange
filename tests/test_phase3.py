@@ -10,7 +10,7 @@ from agentchange import cli
 from agentchange.display import display_command, sanitize_text, validation_wording
 from agentchange.doctor import collect_doctor
 from agentchange.environment import PlatformInfo, detect_platform, detect_python
-from agentchange.evidence import extract_validations
+from agentchange.evidence import analyze_turn, extract_validations
 from agentchange.finalizer import claim_ui_continuation
 from agentchange.git_analysis import turn_directory
 from agentchange.hook_entry import main as hook_main
@@ -44,6 +44,65 @@ def _event(command: str, response: str):
 def _marker(exit_code: int, **extra) -> str:
     value = {"schema_version": "1", "exit_code": exit_code, "duration_ms": 1100, **extra}
     return "__AGENTCHANGE_RESULT__=" + json.dumps(value, separators=(",", ":"))
+
+
+def _hook_event(
+    event_id: str,
+    source_event: str,
+    command: str | None = None,
+    *,
+    tool_id: str | None = None,
+    response: str | None = None,
+    cwd: str = "/workspace/project",
+    statement: str | None = None,
+):
+    payload = {
+        "session_id": "session",
+        "turn_id": "turn",
+        "cwd": cwd,
+        "hook_event_name": source_event,
+    }
+    if command is not None:
+        payload.update(
+            {
+                "tool_name": "Bash",
+                "tool_use_id": tool_id,
+                "tool_input": {"command": command},
+            }
+        )
+    if response is not None:
+        payload["tool_response"] = response
+    if statement is not None:
+        payload["last_assistant_message"] = statement
+    return normalize_envelope(
+        {
+            "event_id": event_id,
+            "session_id": "session",
+            "captured_at": f"2026-07-21T10:00:{len(event_id):02d}Z",
+            "source_event": source_event,
+            "payload": payload,
+        }
+    )
+
+
+def _patch_event(path: str, *, cwd: str = "/workspace/project"):
+    return normalize_envelope(
+        {
+            "event_id": "patch",
+            "session_id": "session",
+            "captured_at": "2026-07-21T10:00:00Z",
+            "source_event": "PreToolUse",
+            "payload": {
+                "session_id": "session",
+                "turn_id": "turn",
+                "cwd": cwd,
+                "hook_event_name": "PreToolUse",
+                "tool_name": "apply_patch",
+                "tool_use_id": "patch-tool",
+                "tool_input": {"command": f"*** Begin Patch\n*** Update File: {path}\n*** End Patch"},
+            },
+        }
+    )
 
 
 def _receipt(*, status="passed", slack="dry_run"):
@@ -108,6 +167,175 @@ def test_command_not_found_and_infrastructure_error_are_not_test_failures():
 def test_nonzero_without_assertion_evidence_is_unknown():
     event = _event("agentchange-run -- pytest -q", _marker(1))
     assert extract_validations([event])[0].status == "unknown"
+
+
+def test_two_same_turn_django_validations_are_observed_and_rendered():
+    check_command = "agentchange exec --auto uv run python manage.py check"
+    test_command = "agentchange exec --auto python manage.py test landing.tests"
+    events = [
+        _hook_event("pre-check", "PreToolUse", check_command, tool_id="check"),
+        _hook_event("pre-test", "PreToolUse", test_command, tool_id="test"),
+        _hook_event(
+            "post-check",
+            "PostToolUse",
+            check_command,
+            tool_id="check",
+            response=_marker(
+                0,
+                requested_command=["uv", "run", "python", "manage.py", "check"],
+                resolved_command=["/workspace/project/.venv/bin/python", "manage.py", "check"],
+                display_command="python manage.py check",
+            ),
+        ),
+        _hook_event(
+            "post-test",
+            "PostToolUse",
+            test_command,
+            tool_id="test",
+            response=_marker(
+                0,
+                requested_command=["python", "manage.py", "test", "landing.tests"],
+                resolved_command=["/workspace/project/.venv/bin/python", "manage.py", "test", "landing.tests"],
+                display_command="python manage.py test",
+            ),
+        ),
+        _hook_event("stop", "Stop", statement="All tests passed."),
+    ]
+    analysis = analyze_turn(
+        events,
+        {"available": True, "repository_root": "/workspace/project", "limitation": None, "classifications": []},
+    )
+    validations = analysis["validations"]
+    assert [(item.category, item.status, item.attempted_event_id) for item in validations] == [
+        ("django_system_check", "passed", "pre-check"),
+        ("django_test", "passed", "pre-test"),
+    ]
+    assert [item.requested_command for item in validations] == [
+        ["uv", "run", "python", "manage.py", "check"],
+        ["python", "manage.py", "test", "landing.tests"],
+    ]
+    assert analysis["overall_validation_status"] == "passed"
+    assert "VALIDATION_CLAIM_NOT_VERIFIABLE" not in {item.code for item in analysis["findings"]}
+
+    receipt = _receipt()
+    receipt["validation"] = {
+        "summary": validation_wording([item.model_dump(mode="json") for item in validations]),
+        "commands": [item.model_dump(mode="json") for item in validations],
+    }
+    receipt["observed"]["authoritative_validation_count"] = 2
+    markdown = render_markdown(receipt, include_integrity=False)
+    summary = render_ui_summary(receipt)
+    assert "**Validation:** 2 of 2 observed validation commands passed" in markdown
+    assert "| Django System Check | `python manage.py check` | Passed | 0 | 1.1 s |" in markdown
+    assert "| Django Tests | `python manage.py test` | Passed | 0 | 1.1 s |" in markdown
+    assert "Validation: 2 of 2 observed validation commands passed" in summary
+    assert "Scope: python manage.py check; python manage.py test" in summary
+
+
+def test_django_command_without_final_marker_is_not_authoritative():
+    event = _hook_event(
+        "post-check",
+        "PostToolUse",
+        "agentchange exec --auto python manage.py check",
+        tool_id="check",
+        response="System check identified no issues.",
+    )
+    validation = extract_validations([event])[0]
+    assert validation.category == "django_system_check"
+    assert validation.status == "unknown"
+    assert not validation.authoritative
+
+
+def test_chained_django_wrappers_create_two_authoritative_validations():
+    command = (
+        "agentchange exec --auto python manage.py check "
+        "&& agentchange exec --auto python manage.py test"
+    )
+    response = "\n".join(
+        (
+            "System check identified no issues (0 silenced).",
+            _marker(
+                0,
+                duration_ms=2347,
+                requested_command=["python", "manage.py", "check"],
+                resolved_command=["python", "manage.py", "check"],
+                display_command="python manage.py check",
+            ),
+            "Ran 3 tests in 1.432s",
+            "OK",
+            _marker(
+                0,
+                duration_ms=4193,
+                requested_command=["python", "manage.py", "test"],
+                resolved_command=["python", "manage.py", "test"],
+                display_command="python manage.py test",
+            ),
+        )
+    )
+    events = [
+        _hook_event("pre-chain", "PreToolUse", command, tool_id="chain"),
+        _hook_event("post-chain", "PostToolUse", command, tool_id="chain", response=response),
+    ]
+    validations = extract_validations(events)
+    assert [(item.category, item.status, item.duration_ms) for item in validations] == [
+        ("django_system_check", "passed", 2347),
+        ("django_test", "passed", 4193),
+    ]
+    assert all(item.authoritative for item in validations)
+    assert all(item.attempted_event_id == "pre-chain" for item in validations)
+    assert validation_wording([item.model_dump(mode="json") for item in validations]) == (
+        "2 of 2 observed validation commands passed"
+    )
+
+
+def _write_finding_codes(captured_path: str, git_path: str, repository_root: str) -> set[str]:
+    analysis = analyze_turn(
+        [_patch_event(captured_path, cwd=repository_root)],
+        {
+            "available": True,
+            "repository_root": repository_root,
+            "limitation": None,
+            "classifications": [
+                {
+                    "path": git_path,
+                    "classification": "New during this turn",
+                    "baseline_status": None,
+                    "final_status": " M",
+                }
+            ],
+        },
+    )
+    return {item.code for item in analysis["findings"]}
+
+
+def test_absolute_wsl_write_path_matches_repository_relative_git_path():
+    codes = _write_finding_codes(
+        "/mnt/c/Users/maorb/work/toki_site/Toki/landing/content.py",
+        "landing/content.py",
+        "/mnt/c/Users/maorb/work/toki_site/Toki",
+    )
+    assert "GIT_CHANGE_WITHOUT_OBSERVED_WRITE" not in codes
+    assert "WRITE_NOT_REFLECTED_IN_GIT" not in codes
+
+
+def test_absolute_write_path_with_spaces_matches_git_path():
+    codes = _write_finding_codes(
+        "/workspace/My Project/landing/page copy.py",
+        "landing/page copy.py",
+        "/workspace/My Project",
+    )
+    assert "GIT_CHANGE_WITHOUT_OBSERVED_WRITE" not in codes
+    assert "WRITE_NOT_REFLECTED_IN_GIT" not in codes
+
+
+def test_write_outside_repository_remains_unmatched():
+    codes = _write_finding_codes(
+        "/workspace/other/landing/content.py",
+        "landing/content.py",
+        "/workspace/project",
+    )
+    assert "GIT_CHANGE_WITHOUT_OBSERVED_WRITE" in codes
+    assert "WRITE_NOT_REFLECTED_IN_GIT" in codes
 
 
 def test_personal_paths_and_webhooks_are_sanitized():

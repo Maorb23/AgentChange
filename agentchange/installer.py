@@ -14,7 +14,7 @@ from typing import Callable
 
 from .environment import detect_platform, find_executable
 
-VERSION = "0.3.0"
+VERSION = "0.3.2"
 PLUGIN_NAME = "agentchange"
 COPY_PATHS = (".codex-plugin", "hooks", "skills", "agentchange", "scripts", "pyproject.toml", "README.md")
 
@@ -174,7 +174,7 @@ def install(
         lines.append(f"✓ {label} installed")
     plugin_source = source or plugin_source_root()
     if plugin_source is None:
-        lines.extend(("✗ Bundled plugin source is unavailable", "Fix: Reinstall AgentChange 0.3.0 and run `agentchange install` again."))
+        lines.extend((f"✗ Bundled plugin source is unavailable", f"Fix: Reinstall AgentChange {VERSION} and run `agentchange install` again."))
         return False, lines
     target = user_home / "plugins" / PLUGIN_NAME
     copy_plugin_source(plugin_source, target)
@@ -191,7 +191,7 @@ def install(
         lines.extend(("✗ Codex could not install agentchange@personal", "Fix: Run `codex plugin add agentchange@personal`, then rerun `agentchange doctor`."))
         return False, lines
     if plugin_version(target) != VERSION:
-        lines.extend(("✗ Installed plugin version could not be verified", "Fix: Reinstall AgentChange 0.3.0."))
+        lines.extend(("✗ Installed plugin version could not be verified", f"Fix: Reinstall AgentChange {VERSION}."))
         return False, lines
     lines.append(f"✓ Plugin {VERSION} installed")
     roots = cached_plugin_roots(user_home)
@@ -199,6 +199,10 @@ def install(
     if verified_root is None:
         lines.extend(("✗ Cached plugin version could not be verified", "Fix: Run `codex plugin add agentchange@personal`, then rerun `agentchange install`."))
         return False, lines
+    if plugin_fingerprint(verified_root) != plugin_fingerprint(target):
+        lines.extend(("✗ Cached plugin fingerprint does not match the installed source", "Fix: Run `agentchange install` again."))
+        return False, lines
+    lines.append("✓ Cached plugin fingerprint verified")
     if not stop_hook_verified(verified_root):
         lines.extend(("✗ Stop finalizer is not configured", "Fix: Run `agentchange install` again, then approve the updated hooks in Codex."))
         return False, lines

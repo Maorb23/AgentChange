@@ -16,6 +16,11 @@ from .slack import display_state
 
 SCHEMA_VERSION = "2"
 
+_CATEGORY_LABELS = {
+    "django_system_check": "Django System Check",
+    "django_test": "Django Tests",
+}
+
 
 def canonical_bytes(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
@@ -258,7 +263,7 @@ def render_markdown(receipt: dict[str, Any], *, include_integrity: bool) -> str:
             result = item["status"].replace("_", " ").title()
             exit_code = item["exit_code"] if item["exit_code"] is not None else "—"
             lines.append(
-                f"| {item['category'].replace('_', ' ').title()} | `{sanitize_text(item['scope'])}` | {result} | {exit_code} | {duration_display(item['duration_ms'])} |"
+                f"| {_CATEGORY_LABELS.get(item['category'], item['category'].replace('_', ' ').title())} | `{sanitize_text(item['scope'])}` | {result} | {exit_code} | {duration_display(item['duration_ms'])} |"
             )
     else:
         lines.append("No relevant validation command was observed.")

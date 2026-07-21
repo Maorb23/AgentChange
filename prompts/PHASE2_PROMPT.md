@@ -1,228 +1,229 @@
-Continue working in the existing AgentChange repository.
+# PHASE 2 LIVE-EVIDENCE AND ATTRIBUTION REQUIREMENTS
 
-Phase 1 has already created:
+Phase 1 and Phase 1.5 have passed live validation.
 
-* A valid Codex plugin.
-* An AgentChange skill.
-* Lifecycle hooks.
-* Per-session JSONL evidence.
-* Normalized hook events.
-* Hook fixtures and tests.
+A real Codex session confirmed that:
 
-Implement **Phase 2: Git analysis, evidence checks, deterministic risk scoring, receipt generation, Slack delivery, and the complete end-to-end demo**.
+* `SessionStart`, `PostToolUse`, and `Stop` are captured in one session.
+* `Stop.last_assistant_message` contains Codex’s final reported statement.
+* Ordinary Bash `tool_response` does not reliably include an exit status.
+* `agentchange-run` emits reliable machine-readable validation markers.
+* Hook events may be appended to JSONL out of chronological order.
 
-# Goal
-
-When Codex completes a coding turn, the `Stop` hook should automatically:
-
-1. Load the correct session evidence.
-2. Inspect the local repository state.
-3. Determine what was observed.
-4. Determine what changed.
-5. Identify validation results.
-6. Detect contradictions between Codex claims and recorded evidence where possible.
-7. Calculate an explainable risk score.
-8. Generate JSON and Markdown receipts.
-9. Send a concise receipt to Slack.
-10. Return a valid Codex hook response.
-
-The local demo must work without Slack credentials by using dry-run mode.
-
-# Important evidence distinction
-
-Every receipt must distinguish between:
-
-## Observed
-
-Directly captured through hooks:
-
-* Prompts.
-* Commands attempted.
-* Command results.
-* Patch or write tools.
-* MCP calls.
-* Permission requests.
-* Stop event.
-
-## Repository state
-
-Observed through local Git commands during finalization:
-
-* Changed files.
-* Added or deleted files.
-* Line counts.
-* Sensitive paths.
-* Dependency changes.
-* Working-tree state.
-
-## Reported by Codex
-
-Statements Codex made about:
-
-* Completed work.
-* Tests.
-* Validation.
-* Remaining issues.
-
-## Unknown
-
-Anything not observable through supported hooks or Git.
-
-Never claim complete activity capture.
-
-# Git analysis
-
-At Stop time, inspect the working directory from session metadata.
-
-Use safe subprocess argument arrays.
-
-Never use `shell=True`.
-
-Support repositories with:
-
-* Staged changes.
-* Unstaged changes.
-* Untracked files.
-* A detached HEAD where practical.
-* No commits yet where practical.
-
-Collect:
-
-* Repository root.
-* Current branch where available.
-* HEAD SHA where available.
-* Files added.
-* Files modified.
-* Files deleted.
-* Untracked files.
-* Added and deleted line totals.
-* Whether authentication or authorization code changed.
-* Whether dependency files changed.
-* Whether migrations changed.
-* Whether CI/CD changed.
-* Whether infrastructure changed.
-* Whether tests changed.
-* Whether changes are documentation-only.
-
-Keep path rules transparent and centralized.
-
-Sensitive examples:
+Observed live markers:
 
 ```text
-**/auth/**
-**/authentication/**
-**/authorization/**
-**/permissions/**
-**/security/**
-**/migrations/**
-.github/workflows/**
-infra/**
-infrastructure/**
-terraform/**
-*.tf
-Dockerfile
-docker-compose*.yml
-package.json
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-requirements*.txt
-pyproject.toml
-poetry.lock
+__AGENTCHANGE_RESULT__={"schema_version":"1","exit_code":0,"duration_ms":83}
+__AGENTCHANGE_RESULT__={"schema_version":"1","exit_code":1,"duration_ms":29}
 ```
 
-Do not store the full Git diff in Slack.
+These markers are the authoritative source for independently observed test, lint, build, type-check, and security-scan outcomes.
 
-# Validation-result extraction
+Before adding new functionality:
 
-Identify test commands conservatively.
+1. Add sanitized versions of the real successful and failed payloads as regression fixtures.
+2. Verify that:
 
-Support patterns such as:
+   * exit code `0` becomes `succeeded`;
+   * nonzero exit code becomes `failed`;
+   * confidence is `observed`.
+3. Keep ordinary Bash responses without a valid final marker as `unknown`.
+4. Do not infer success from output text, empty output, or Codex’s final statement.
+
+# PER-TURN RECEIPTS
+
+Generate one receipt per Codex turn, not one undifferentiated receipt for the entire session.
+
+Use:
 
 ```text
-pytest
-python -m pytest
-npm test
-npm run test
-yarn test
-pnpm test
-go test
-cargo test
-mvn test
-gradle test
-dotnet test
+session_id
+turn_id
 ```
 
-Also recognize lint and build commands separately where practical.
+as the main correlation identifiers.
 
-Use the latest completed relevant command as the primary result.
+Every finding, validation result, agent claim, and finalization record must belong to the same `turn_id`.
 
-Do not treat an attempted command without a completion result as passed.
+The Stop handler must:
 
-Classify validations as:
+1. Receive the Stop event.
+2. identify its `session_id` and `turn_id`.
+3. Load only events belonging to that turn for turn-specific analysis.
+4. Optionally include session-level metadata separately.
+5. Compare `Stop.last_assistant_message` only with validation evidence from the same turn.
+6. Never combine a failed test from an earlier turn with a claim from a later turn.
 
-* Passed.
-* Failed.
-* Attempted but result unknown.
-* Not observed.
+The receipt identifier should be deterministic from:
 
-# Codex claim capture
+```text
+session_id + turn_id + receipt_schema_version
+```
 
-First determine whether the current official Stop-hook payload includes Codex’s final response or another reliable final statement.
+# EVENT ORDERING AND CONCURRENCY
 
-If it does:
+Do not assume JSONL line order represents execution order.
 
-* Normalize and store the statement.
-* Compare relevant claims with observed evidence.
+Hook handlers and tool calls may execute concurrently, so events can be appended in a different order than their timestamps.
 
-If it does not:
+Requirements:
 
-* Do not fabricate access.
-* Use the most reliable documented alternative.
-* The skill may instruct Codex to emit a structured summary artifact, but that artifact must be labeled “reported by Codex,” not observed evidence.
-* Keep the demo fixture able to exercise contradiction detection independently.
+* Parse all UTC timestamps.
+* Sort events by timestamp for presentation.
+* Correlate `PreToolUse` and `PostToolUse` using `tool_use_id`.
+* Use `turn_id` to isolate each coding turn.
+* Preserve the original JSONL line number for diagnostics.
+* Do not use “last line in the file” as the latest event.
+* Do not select one arbitrary validation as authoritative when several ran concurrently.
 
-Support normalized test-success claims such as:
+Represent every validation separately.
+
+Example:
+
+```text
+ruff check .       passed
+pytest tests/unit  passed
+pytest tests/e2e   failed
+```
+
+The overall validation summary must be:
+
+```text
+failed
+```
+
+when any independently observed required validation failed.
+
+Use:
+
+* `failed` if at least one authoritative validation failed;
+* `passed` only if at least one authoritative validation passed and none failed;
+* `unknown` if commands were attempted but no authoritative result was captured;
+* `not_observed` if no relevant validation command was captured.
+
+# GIT BASELINE AND TURN ATTRIBUTION
+
+Do not compare only the final working tree at Stop.
+
+The repository may already contain staged, unstaged, or untracked changes before the Codex turn starts. Those changes must not automatically be attributed to the current turn.
+
+At `UserPromptSubmit`, or before the first tool event for the turn, save a lightweight baseline under the session directory:
+
+```text
+turns/<turn_id>/git_baseline.json
+```
+
+Capture where available:
+
+* Git repository root.
+* HEAD SHA.
+* Branch.
+* `git status --porcelain=v1`.
+* Staged file list.
+* Unstaged file list.
+* Untracked file list.
+* Timestamp.
+
+At Stop, capture the equivalent final snapshot.
+
+The analysis should distinguish:
+
+```text
+Pre-existing change
+New during this turn
+Modified further during this turn
+No longer present at Stop
+Attribution unknown
+```
+
+For the MVP, exact line-level attribution is not required.
+
+Do not claim that Codex created a file merely because it is untracked at Stop. Only classify it as newly introduced during the turn if it was absent from the baseline.
+
+If no baseline exists, label repository attribution as:
+
+```text
+Repository changes observed at Stop; turn-level attribution unavailable.
+```
+
+Do not silently attribute the full dirty working tree to Codex.
+
+# VALIDATION EVIDENCE RULES
+
+Validation results are authoritative only when one of these is true:
+
+1. A valid final `__AGENTCHANGE_RESULT__=` marker was captured.
+2. Another supported tool returned an explicit reliable status.
+
+For `agentchange-run` events:
+
+* Parse only the final valid marker.
+* Require `schema_version`, `exit_code`, and `duration_ms`.
+* Ignore marker-like strings in earlier child output.
+* Treat malformed or duplicate final markers as unknown.
+* Preserve the original command.
+* Record that the result source is `agentchange-run`.
+* Set evidence confidence to `observed`.
+
+For ordinary Bash:
+
+* Record that the command was attempted.
+* Preserve sanitized output.
+* Set the result to `unknown` unless an explicit reliable status exists.
+* Do not infer failure from empty output.
+* Do not infer success from nonempty output.
+
+# CLAIM COMPARISON
+
+Use `Stop.last_assistant_message` as Codex-reported evidence.
+
+Compare claims only against observed validation events from the same turn.
+
+Support claims such as:
 
 ```text
 all tests pass
 all tests passed
 tests passed
 test suite passes
-test suite is passing
+lint passes
+build succeeded
 ```
 
-The essential contradiction is:
+Do not create `TEST_CLAIM_CONTRADICTION` merely because:
+
+* no test was observed;
+* a test result is unknown;
+* a failed result belongs to another turn;
+* the failed command is unrelated to the stated claim.
+
+Use:
 
 ```text
-Reported by Codex:
-“All tests pass.”
-
-Observed:
-pytest -q exited with code 1.
-
-Conclusion:
 TEST_CLAIM_CONTRADICTION
 ```
 
-# Evidence findings
+only when the same turn contains:
 
-Create stable finding models with:
+1. A clear positive validation claim.
+2. A matching independently observed failed validation.
 
-```python
-code: str
-title: str
-severity: str
-explanation: str
-evidence: list[str]
-score_delta: int
+When a positive claim exists but evidence is missing or unknown, use a separate finding:
+
+```text
+VALIDATION_CLAIM_NOT_VERIFIABLE
 ```
 
-Support findings such as:
+This should be lower severity than a proven contradiction.
+
+# REVISED FINDINGS
+
+Include:
 
 ```text
 TESTS_FAILED
 TEST_CLAIM_CONTRADICTION
+VALIDATION_CLAIM_NOT_VERIFIABLE
 NO_TEST_EVIDENCE
 TEST_RESULT_UNKNOWN
 AUTH_CODE_CHANGED
@@ -230,7 +231,9 @@ DEPENDENCY_CHANGED
 MIGRATION_CHANGED
 CI_CHANGED
 INFRASTRUCTURE_CHANGED
-UNTRACKED_FILE
+NEW_UNTRACKED_FILE
+PREEXISTING_REPOSITORY_CHANGES
+TURN_ATTRIBUTION_UNAVAILABLE
 EXTERNAL_OR_MCP_TOOL_USED
 PERMISSION_REQUESTED
 SESSION_INCOMPLETE
@@ -238,433 +241,126 @@ WRITE_NOT_REFLECTED_IN_GIT
 GIT_CHANGE_WITHOUT_OBSERVED_WRITE
 ```
 
-Be careful with the last two:
-
-* Missing write evidence does not prove Codex did not make the change.
-* A patch may touch multiple files.
-* Some file operations may not be observable.
-
-Use wording such as:
-
-> No matching write event was captured.
-
-Not:
-
-> Codex secretly changed this file.
-
-# Deterministic risk score
-
-Implement an explainable score from 0 to 100.
-
-Suggested initial rules:
+Use cautious language:
 
 ```text
-Authentication or authorization changed: +25
-Infrastructure or CI/CD changed: +20
-Database migration changed: +15
-Dependency manifest or lockfile changed: +10
-Latest test result failed: +25
-No test evidence for code changes: +10
-Test result unknown: +10
-Test-success claim contradicted: +30
-Untracked source file created: +10
-MCP or external tool used: +5
-Permission requested for sensitive action: +5
-Session ended without a Stop event: +10
-More than 30 files changed: +10
-Explicit human approval captured: -10
-Documentation-only change: -10
+No matching write event was captured.
 ```
 
-Clamp the result to 0–100.
-
-Risk levels:
+Never say:
 
 ```text
-0–29: Low
-30–59: Moderate
-60–79: High
-80–100: Critical
+Codex secretly changed this file.
 ```
 
-Store every contribution.
-
-Do not use an LLM for risk scoring.
-
-# Receipt JSON
-
-Generate a structured JSON receipt containing:
-
-* Receipt version.
-* Session identifier.
-* Provider: Codex.
-* Model where captured.
-* Working directory.
-* Repository.
-* Branch.
-* HEAD SHA.
-* User request summary.
-* Agent-reported summary.
-* Observed-event counts.
-* Changed files.
-* Validation results.
-* Findings.
-* Risk score.
-* Risk level.
-* Score breakdown.
-* Required reviewers.
-* Evidence limitations.
-* Evidence integrity digests.
-* Generated timestamp.
-
-Use stable ordering and canonical serialization where relevant.
-
-# Markdown receipt
-
-Generate a readable receipt resembling:
-
-````markdown
-## 🤖 AgentChange Receipt — Codex
-
-**Risk:** 🔴 Critical — 100/100  
-**Repository:** `payments-service`  
-**Session:** `abc123`  
-**Model:** `gpt-5.6`  
-
-### Requested task
-
-Add password-reset rate limiting.
-
-### Observed activity
-
-| Category | Result |
-|---|---:|
-| Commands completed | 3 |
-| Files changed | 4 |
-| Patch/write tools | 2 |
-| MCP tools | 0 |
-| Permission requests | 1 |
-
-### Repository changes
-
-- Authentication code changed: `src/auth/reset_password.py`
-- Dependency file changed: `pyproject.toml`
-
-### Validation
-
-- ✅ `ruff check .` exited with code 0
-- ❌ `pytest -q` exited with code 1
-
-### Evidence conflict
-
-> Codex reported: “All tests pass.”
-
-Observed evidence:
-
-```text
-pytest -q
-exit code: 1
-````
-
-**Conclusion: Claim not verified.**
-
-### Risk explanation
-
-* Authentication code changed: +25
-* Dependency file changed: +10
-* Tests failed: +25
-* Test-success claim contradicted: +30
-* Permission requested: +5
-
-### Required review
-
-* Application owner
-* Security reviewer
-
-### Evidence limitations
-
-AgentChange reports supported hook events and local Git state. It does not guarantee that all Codex activity was captured.
-
-````
-
-Keep it concise enough for Slack.
-
-# Evidence integrity
-
-Calculate SHA-256 digests for:
-
-- Raw session JSONL.
-- Canonical JSON receipt body.
-- Markdown receipt body.
-
-Call these:
-
-> Evidence integrity digests
-
-Do not call them tamper-proof.
-
-# Slack delivery
+# REVISED RISK RULES
 
 Use:
 
 ```text
-AGENTCHANGE_SLACK_WEBHOOK_URL
-````
+Authentication or authorization changed during turn: +25
+Infrastructure or CI/CD changed during turn: +20
+Database migration changed during turn: +15
+Dependency manifest or lockfile changed during turn: +10
+Observed validation failure: +25
+No test evidence for substantive code changes: +10
+Validation result unknown: +10
+Observed validation claim contradiction: +30
+Positive validation claim not verifiable: +10
+New untracked source file introduced during turn: +10
+MCP or external tool used: +5
+Permission requested for sensitive action: +5
+Session ended without Stop: +10
+More than 30 files changed during turn: +10
+Explicit human approval captured: -10
+Documentation-only change during turn: -10
+```
 
-Optional settings:
+Do not score pre-existing repository changes as if Codex introduced them.
+
+If turn-level Git attribution is unavailable:
+
+* Report the limitation.
+* Score only findings supported by hooks and clearly observed final repository state.
+* Do not apply change-attribution penalties that require a baseline.
+
+# STOP FINALIZATION AND IDEMPOTENCY
+
+Use an idempotency key based on:
 
 ```text
-AGENTCHANGE_SLACK_ENABLED=true
-AGENTCHANGE_SLACK_TIMEOUT_SECONDS=10
-AGENTCHANGE_SLACK_MAX_RETRIES=2
+session_id + turn_id + receipt_schema_version
 ```
+
+The Stop handler must:
+
+1. Record the Stop event first.
+2. Acquire a per-turn finalization guard.
+3. Check whether that turn already has a completed receipt.
+4. Load and sort same-turn events.
+5. Load the Git baseline and final snapshot.
+6. Produce findings and risk score.
+7. Save receipt JSON and Markdown atomically.
+8. Save a completed local finalization marker.
+9. Attempt Slack delivery.
+10. Store Slack delivery status separately.
+11. Return valid hook JSON even when Slack fails.
+
+A failed Slack attempt must not cause the local receipt to be regenerated or lost.
+
+Repeated Stop events may retry Slack only according to an explicit delivery policy. They must not create duplicate local receipts or duplicate Slack messages.
+
+# EVIDENCE INTEGRITY DIGESTS
+
+Avoid self-referential hashes.
+
+Calculate:
+
+1. Raw JSONL digest from the exact captured bytes.
+2. Canonical analysis digest before adding digest fields.
+3. Canonical JSON receipt-body digest before adding digest fields.
+4. Markdown-body digest before adding the evidence-integrity section.
+
+Then append the digest values.
+
+Document exactly what each digest covers.
+
+Do not call the receipts tamper-proof or remotely attested.
+
+# SLACK DELIVERY LIMITS
+
+Slack delivery must never delay the Stop hook excessively.
 
 Requirements:
 
-* Never commit or log the webhook.
-* Never include the webhook in exceptions.
-* Use a timeout.
-* Retry only a small number of transient failures.
-* Do not block receipt generation when Slack fails.
-* Save the local receipt before attempting Slack.
-* Record Slack delivery status separately.
-* Keep the payload within Slack message-size constraints.
-* Send a concise summary rather than the complete event history.
-* Use plain webhook delivery for the MVP.
-* Do not add Slack OAuth or a Slack bot.
+* Save local receipts before any network request.
+* Use a short timeout.
+* Cap total Slack retry time.
+* Retry only transient failures.
+* Do not retry HTTP errors that are clearly permanent.
+* Never expose the webhook URL.
+* Keep the complete receipt local.
+* Send a shorter Slack summary with the risk, major findings, validation results, and local receipt identifier.
 
-Support dry-run mode:
+Slack acceptance proves delivery to the webhook endpoint only. It does not prove that a human read or approved the receipt.
 
-```text
-AGENTCHANGE_SLACK_ENABLED=false
-```
-
-When dry-run mode is active:
-
-* Generate all receipts.
-* Print where they were stored.
-* Do not make a network request.
-* Mark delivery status as `dry_run`.
-
-# Stop hook
-
-Upgrade the Phase 1 Stop handler.
-
-It should:
-
-1. Parse the Stop event.
-2. Record it.
-3. Locate the session directory.
-4. Prevent duplicate finalization for the same turn where possible.
-5. Load and validate session evidence.
-6. Inspect Git.
-7. Produce findings.
-8. Calculate risk.
-9. Generate JSON and Markdown.
-10. Save both atomically.
-11. Attempt Slack delivery.
-12. Record delivery result.
-13. Print the valid hook response expected by Codex.
-14. Avoid blocking Codex because Slack failed.
-
-Use a finalization marker or deterministic turn identifier to avoid duplicate Slack receipts when Stop is delivered more than once.
-
-# Demo without a false live claim
-
-A real Codex model may correctly report that tests failed, so the demo must not depend on forcing Codex to lie.
-
-Provide two demos:
-
-## Demo A: real, honest Codex task
-
-* Run a small Codex coding task.
-* Capture its real events.
-* Generate an honest receipt.
-* Send it to Slack or dry-run output.
-
-## Demo B: deterministic contradiction fixture
-
-* Feed fixture events where:
-
-  * `pytest -q` exits with code 1.
-  * The agent-reported summary says “All tests pass.”
-* Generate a receipt containing `TEST_CLAIM_CONTRADICTION`.
-
-Label Demo B as a controlled integrity test, not a claim that Codex normally lies.
-
-# End-to-end script
-
-Create:
-
-```text
-scripts/demo_end_to_end.sh
-```
-
-The script should:
-
-1. Create a temporary Git repository.
-2. Configure a local demo Git identity.
-3. Create an initial application and commit.
-4. Generate fixture events through the real normalizer.
-5. Modify:
-
-   * `src/auth/reset_password.py`
-   * `pyproject.toml`
-6. Record corresponding patch or write events.
-7. Record a successful lint result.
-8. Record a failed test result.
-9. Add the controlled “All tests pass” reported statement.
-10. Record Stop.
-11. Run the real finalizer.
-12. Generate JSON and Markdown receipts.
-13. Run Slack in dry-run mode by default.
-14. Print:
-
-* Session path.
-* JSON receipt path.
-* Markdown receipt path.
-* Risk score.
-* Main contradiction.
-
-15. Exit successfully.
-
-Do not destructively modify the AgentChange repository.
-
-# Tests
-
-Add tests for:
-
-* Git repository detection.
-* Staged changes.
-* Unstaged changes.
-* Untracked files.
-* Sensitive-path classification.
-* Dependency classification.
-* Validation-command recognition.
-* Successful command result.
-* Failed command result.
-* Unknown command result.
-* Claim normalization.
-* Claim contradiction.
-* Finding generation.
-* Score contributions.
-* Score clamping.
-* Risk boundaries.
-* Review recommendations.
-* Canonical JSON output.
-* Stable Markdown output.
-* Evidence digests.
-* Slack dry run.
-* Slack success.
-* Slack timeout.
-* Slack transient retry.
-* Slack permanent failure.
-* Webhook redaction.
-* Receipt persistence despite Slack failure.
-* Duplicate Stop/finalization handling.
-* Controlled contradiction demo.
-
-Mock Slack network requests in tests.
-
-Do not require a real webhook for tests.
-
-# README
-
-Document:
-
-1. What AgentChange does.
-2. What it does not guarantee.
-3. Local plugin installation.
-4. Hook trust through `/hooks`.
-5. Skill activation.
-6. Configuration.
-7. Slack webhook setup.
-8. Dry-run mode.
-9. Where evidence and receipts are stored.
-10. End-to-end demo.
-11. Real Codex task test.
-12. Controlled contradiction test.
-13. Risk-scoring rules.
-14. Supported observations.
-15. Unsupported or incomplete observations.
-16. Uninstallation.
-17. One-day MVP boundaries.
-
-Provide copy-paste commands.
-
-# Final validation
-
-Run:
-
-```bash
-python -m compileall agentchange
-pytest -q
-./scripts/demo_end_to_end.sh
-```
-
-Validate:
-
-```text
-.codex-plugin/plugin.json
-hooks/hooks.json
-skills/agentchange/SKILL.md
-```
-
-Generate:
-
-```text
-examples/sample_session.jsonl
-examples/sample_receipt.json
-examples/sample_receipt.md
-```
-
-Where supported, perform a real local plugin test:
-
-1. Install or enable AgentChange.
-2. Trust the hooks through `/hooks`.
-3. Run a small Codex code-editing task.
-4. Confirm events were recorded.
-5. Confirm Stop generated a receipt.
-6. Confirm Slack delivery or dry-run output.
-
-Do not claim that a Slack message was sent unless it was actually sent.
-
-# Phase 2 acceptance criteria
+# REVISED ACCEPTANCE CRITERIA
 
 Phase 2 is complete only when:
 
-* Stop automatically finalizes the correct session.
-* Git state is analyzed.
-* Validation results are extracted.
-* Controlled contradictions are detected.
-* Risk scoring is deterministic and explainable.
-* JSON and Markdown receipts are produced.
-* Slack delivery works with a real webhook where available.
-* Dry-run mode works without a webhook.
-* Slack failure does not destroy local receipts.
-* Duplicate Stop events do not create duplicate receipts.
+* Live AgentChange runner payloads are covered by regression fixtures.
+* Exit code `0` and nonzero exit codes normalize as observed evidence.
+* Raw Bash results without markers remain unknown.
+* Receipt analysis is isolated by `turn_id`.
+* Events are not interpreted according to JSONL append order.
+* Parallel validations are represented separately.
+* A Git baseline is captured before turn changes where possible.
+* Pre-existing dirty files are not attributed to the current Codex turn.
+* Claims are compared only with same-turn evidence.
+* A proven contradiction and an unverifiable claim are separate findings.
+* Repeated Stop events are idempotent.
+* JSON and Markdown receipts are saved before Slack delivery.
+* Slack failure preserves all local results.
+* The controlled contradiction demo works.
+* A real honest Codex task generates a receipt.
 * All tests pass.
-* The complete demo works.
-* The code remains understandable in one day.
-* No database, backend, GitHub integration, or dashboard was added.
-
-After completion, provide:
-
-1. Final architecture.
-2. Repository structure.
-3. Files changed.
-4. Exact installation commands.
-5. Exact demo commands.
-6. Test results.
-7. Controlled demo risk score.
-8. The contradiction finding.
-9. Live Codex hook test results.
-10. Slack delivery result.
-11. Known limitations.
-12. The three best next product steps.
-
-Commit with:
-
-```text
-feat: complete AgentChange receipts and Slack delivery
-```

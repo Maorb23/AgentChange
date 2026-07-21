@@ -10,6 +10,8 @@ from .models import EventType, NormalizedEvent
 
 _RESULT_PREFIX = "__AGENTCHANGE_RESULT__="
 _PATCH_PATH = re.compile(r"(?m)^\*\*\* (?:Add|Update|Delete) File:\s*(.+?)\s*$")
+_LEGACY_RUNNER = re.compile(r"(?:^|[\\/\s])agentchange-run(?:\.exe)?\s+--(?:\s|$)")
+_AUTO_RUNNER = re.compile(r"(?:^|[\\/\s])agentchange(?:\.exe)?\s+exec\s+--auto(?:\s|$)")
 
 
 def _response_texts(response: Any) -> list[str]:
@@ -49,16 +51,13 @@ def _parse_marker(line: str) -> dict[str, Any] | None:
 
 def _command_result(
     command: str | None, response: Any
-) -> tuple[int | None, int | None, str, str, list[str], dict[str, Any]]:
+) -> tuple[int | None, int | None, str, str, list[str], dict[str, Any], list[dict[str, Any]]]:
+    wrapper_count = sum(len(pattern.findall(command or "")) for pattern in (_LEGACY_RUNNER, _AUTO_RUNNER))
     authoritative_command = bool(
-        command
-        and (
-            re.search(r"(?:^|[\\/\s])agentchange-run(?:\.exe)?\s+--(?:\s|$)", command)
-            or re.search(r"(?:^|[\\/\s])agentchange(?:\.exe)?\s+exec\s+--auto(?:\s|$)", command)
-        )
+        command and wrapper_count
     )
     if not authoritative_command:
-        return None, None, "unknown", "unknown", [], {}
+        return None, None, "unknown", "unknown", [], {}, []
     texts = _response_texts(response)
     marker_like_lines: list[str] = []
     valid_markers: list[tuple[dict[str, Any], bool]] = []
@@ -73,15 +72,21 @@ def _command_result(
                 valid_markers.append((parsed, index == len(nonempty_lines) - 1))
 
     if not marker_like_lines:
-        return None, None, "unknown", "unknown", [], {}
-    if len(valid_markers) > 1:
-        return None, None, "unknown", "unknown", ["duplicate valid AgentChange result markers"], {}
+        return None, None, "unknown", "unknown", [], {}, []
+    if len(valid_markers) > wrapper_count:
+        return None, None, "unknown", "unknown", ["duplicate valid AgentChange result markers"], {}, []
     if not valid_markers:
-        return None, None, "unknown", "unknown", ["malformed AgentChange result marker"], {}
+        return None, None, "unknown", "unknown", ["malformed AgentChange result marker"], {}, []
 
-    marker, is_final = valid_markers[0]
+    marker, is_final = valid_markers[-1]
     if not is_final:
-        return None, None, "unknown", "unknown", ["AgentChange result marker was not final"], {}
+        return None, None, "unknown", "unknown", ["AgentChange result marker was not final"], {}, []
+    if len(valid_markers) > 1 and any(
+        not isinstance(value.get("requested_command"), list)
+        or not isinstance(value.get("resolved_command"), list)
+        for value, _ in valid_markers
+    ):
+        return None, None, "unknown", "unknown", ["chained AgentChange markers lacked command metadata"], {}, []
     warnings = []
     if len(marker_like_lines) > 1:
         warnings.append("ignored malformed marker-like output before final result")
@@ -92,6 +97,7 @@ def _command_result(
         "observed",
         warnings,
         marker,
+        [value for value, _ in valid_markers],
     )
 
 
@@ -140,7 +146,7 @@ def normalize_envelope(envelope: dict[str, Any]) -> NormalizedEvent:
         if tool_name == "Bash":
             event_type = EventType.COMMAND_COMPLETED if completed else EventType.COMMAND_ATTEMPTED
             if completed:
-                exit_code, duration_ms, result_status, confidence, warnings, marker = _command_result(
+                exit_code, duration_ms, result_status, confidence, warnings, marker, runner_results = _command_result(
                     command, payload.get("tool_response")
                 )
                 details["result_source"] = (
@@ -159,6 +165,8 @@ def normalize_envelope(envelope: dict[str, Any]) -> NormalizedEvent:
                         )
                         if key in marker
                     }
+                if runner_results:
+                    details["runner_results"] = runner_results
         elif tool_name == "apply_patch":
             event_type = EventType.FILE_CHANGE_COMPLETED if completed else EventType.FILE_CHANGE_ATTEMPTED
             paths = _PATCH_PATH.findall(command or "")

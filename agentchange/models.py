@@ -60,7 +60,16 @@ class NormalizedEvent(BaseModel):
 class ValidationRecord(BaseModel):
     validation_id: str
     tool_use_id: str | None = None
-    category: Literal["test", "lint", "build", "type_check", "security", "other"]
+    category: Literal[
+        "test",
+        "django_test",
+        "django_system_check",
+        "lint",
+        "build",
+        "type_check",
+        "security",
+        "other",
+    ]
     command: str
     status: Literal[
         "passed",
