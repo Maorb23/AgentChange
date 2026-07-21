@@ -9,3 +9,7 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# Local AgentChange live-test artifacts
+live_hook_test.txt
+ui_hook_test.txt
