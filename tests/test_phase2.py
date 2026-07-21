@@ -102,7 +102,7 @@ def _envelope(event_id, timestamp, turn_id, event, *, tool_id=None, command=None
 def test_events_sort_by_timestamp_isolate_turn_and_preserve_parallel_validations(tmp_path):
     path = tmp_path / "events.jsonl"
     marker0 = '__AGENTCHANGE_RESULT__={"schema_version":"1","exit_code":0,"duration_ms":83}'
-    marker1 = '__AGENTCHANGE_RESULT__={"schema_version":"1","exit_code":1,"duration_ms":29}'
+    marker1 = '1 failed\n__AGENTCHANGE_RESULT__={"schema_version":"1","exit_code":1,"duration_ms":29}'
     lines = [
         _envelope("post-b", "2026-07-20T10:00:04Z", "turn-a", "PostToolUse", tool_id="b", command="agentchange-run -- ruff check .", response=marker0),
         _envelope("other", "2026-07-20T10:00:01Z", "turn-b", "PostToolUse", tool_id="x", command="agentchange-run -- pytest -q", response=marker1),
@@ -125,7 +125,7 @@ def test_events_sort_by_timestamp_isolate_turn_and_preserve_parallel_validations
 
 def test_claim_comparison_distinguishes_contradiction_from_unverifiable(tmp_path):
     path = tmp_path / "events.jsonl"
-    failed = '__AGENTCHANGE_RESULT__={"schema_version":"1","exit_code":1,"duration_ms":29}'
+    failed = '1 failed\n__AGENTCHANGE_RESULT__={"schema_version":"1","exit_code":1,"duration_ms":29}'
     lines = [
         _envelope("failed", "2026-07-20T10:00:00Z", "turn-a", "PostToolUse", tool_id="a", command="agentchange-run -- pytest -q", response=failed),
         _envelope("stop-a", "2026-07-20T10:00:01Z", "turn-a", "Stop", statement="All tests pass."),
@@ -144,6 +144,7 @@ def test_claim_comparison_distinguishes_contradiction_from_unverifiable(tmp_path
 
 
 def test_stop_finalization_is_local_first_turn_scoped_and_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     repo = init_repo(tmp_path)
     data = tmp_path / "data"
     session, turn = "receipt-session", "receipt-turn"
@@ -153,13 +154,13 @@ def test_stop_finalization_is_local_first_turn_scoped_and_idempotent(tmp_path, m
     capture_payload(payload(repo, "PreToolUse", session=session, turn=turn, tool_name="apply_patch", tool_use_id="patch", tool_input={"command": "*** Begin Patch\n*** Add File: auth.py\n+x\n*** End Patch"}), data)
     command = "agentchange-run -- pytest -q"
     capture_payload(payload(repo, "PreToolUse", session=session, turn=turn, tool_name="Bash", tool_use_id="test", tool_input={"command": command}), data)
-    capture_payload(payload(repo, "PostToolUse", session=session, turn=turn, tool_name="Bash", tool_use_id="test", tool_input={"command": command}, tool_response='__AGENTCHANGE_RESULT__={"schema_version":"1","exit_code":1,"duration_ms":29}'), data)
+    capture_payload(payload(repo, "PostToolUse", session=session, turn=turn, tool_name="Bash", tool_use_id="test", tool_input={"command": command}, tool_response='1 failed\n__AGENTCHANGE_RESULT__={"schema_version":"1","exit_code":1,"duration_ms":29}'), data)
     capture_payload(payload(repo, "PostToolUse", session=session, turn="other-turn", tool_name="Bash", tool_use_id="other", tool_input={"command": command}, tool_response='__AGENTCHANGE_RESULT__={"schema_version":"1","exit_code":0,"duration_ms":83}'), data)
     stop = payload(repo, "Stop", session=session, turn=turn, last_assistant_message="All tests pass.")
     capture_payload(stop, data)  # Stop is always evidence before finalization.
 
     delivery_checks = []
-    def local_first(plugin_data, directory, receipt):
+    def local_first(plugin_data, directory, receipt, **kwargs):
         assert (directory / "receipt.json").exists()
         assert (directory / "receipt.md").exists()
         assert (directory / "finalization.json").exists()
@@ -175,7 +176,7 @@ def test_stop_finalization_is_local_first_turn_scoped_and_idempotent(tmp_path, m
     assert first["validation"]["overall_status"] == "failed"
     assert len(first["validation"]["commands"]) == 1
     assert "TEST_CLAIM_CONTRADICTION" in {item["code"] for item in first["findings"]}
-    assert delivery_checks == [first["receipt_id"], first["receipt_id"]]
+    assert delivery_checks == [first["receipt_id"]]
     assert first["integrity"]["raw_jsonl"]["digest"] == hashlib.sha256(
         (directory.parents[1] / "events.jsonl").read_bytes()
     ).hexdigest()
@@ -207,6 +208,7 @@ def test_slack_acceptance_is_not_sent_twice_on_repeated_stop(tmp_path, monkeypat
     turn_dir = tmp_path / "turn"
     turn_dir.mkdir()
     receipt = {"receipt_id": "acr_test", "risk": {"level": "low", "score": 0}, "findings": [], "validation": {"commands": []}}
+    monkeypatch.setenv("AGENTCHANGE_SLACK_ENABLED", "true")
     monkeypatch.setenv("AGENTCHANGE_SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/T/B/SECRET")
     calls = []
     class Response:
@@ -217,8 +219,10 @@ def test_slack_acceptance_is_not_sent_twice_on_repeated_stop(tmp_path, monkeypat
         calls.append(request)
         return Response()
     monkeypatch.setattr("urllib.request.urlopen", accepted)
-    assert ensure_delivery(tmp_path, turn_dir, receipt)["state"] == "accepted"
-    assert ensure_delivery(tmp_path, turn_dir, receipt)["state"] == "accepted"
+    assert ensure_delivery(tmp_path, turn_dir, receipt)["state"] == "delivered"
+    duplicate = ensure_delivery(tmp_path, turn_dir, receipt)
+    assert duplicate["state"] == "duplicate_suppressed"
+    assert duplicate["previous_state"] == "delivered"
     assert len(calls) == 1
 
 
@@ -228,6 +232,7 @@ def test_slack_failure_preserves_receipt_and_never_leaks_webhook(tmp_path, monke
     receipt = {"receipt_id": "acr_test", "risk": {"level": "low", "score": 0}, "findings": [], "validation": {"commands": []}}
     (turn_dir / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
     secret = "https://hooks.slack.com/services/T/B/SECRET"
+    monkeypatch.setenv("AGENTCHANGE_SLACK_ENABLED", "true")
     monkeypatch.setenv("AGENTCHANGE_SLACK_WEBHOOK_URL", secret)
     calls = []
     def fail(request, timeout):
@@ -236,7 +241,9 @@ def test_slack_failure_preserves_receipt_and_never_leaks_webhook(tmp_path, monke
     monkeypatch.setattr("urllib.request.urlopen", fail)
     first = ensure_delivery(tmp_path, turn_dir, receipt)
     second = ensure_delivery(tmp_path, turn_dir, receipt)
-    assert first["state"] == second["state"] == "failed_transient"
+    assert first["state"] == "failed_transient"
+    assert second["state"] == "duplicate_suppressed"
+    assert second["previous_state"] == "failed_transient"
     assert len(calls) == 2
     serialized = (turn_dir / "slack_delivery.json").read_text(encoding="utf-8")
     assert secret not in serialized and "SECRET" not in serialized

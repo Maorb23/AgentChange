@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .models import Finding, NormalizedEvent, ValidationRecord
 from .normalize import normalize_envelope
+from .display import display_command as make_display_command, sanitize_text
 
 _CLAIMS = [
     ("test", re.compile(r"\b(?:all\s+tests?|tests?|test\s+suite)\s+(?:pass|passes|passed)\b", re.I)),
@@ -55,6 +57,83 @@ def validation_category(command: str) -> str:
     return "other"
 
 
+def _command_tokens(command: str, marker: dict[str, Any], key: str) -> list[str]:
+    value = marker.get(key)
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return list(value)
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+    if "--" in tokens and any("agentchange-run" in token for token in tokens[: tokens.index("--")]):
+        return tokens[tokens.index("--") + 1 :]
+    for index, token in enumerate(tokens):
+        if token.rsplit("/", 1)[-1] == "agentchange" and tokens[index + 1 : index + 3] == ["exec", "--auto"]:
+            return tokens[index + 3 :]
+    return tokens
+
+
+def validation_scope(tokens: list[str], category: str) -> str:
+    if category != "test":
+        return "Selected command"
+    pytest_index = next(
+        (index for index, token in enumerate(tokens) if token.rsplit("/", 1)[-1] == "pytest"),
+        None,
+    )
+    if pytest_index is None:
+        return "Selected tests"
+    arguments = tokens[pytest_index + 1 :]
+    options_with_value = {"-k", "-m", "--maxfail", "--tb", "--rootdir", "-c", "--confcutdir"}
+    scope: list[str] = []
+    skip_next = False
+    for token in arguments:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in options_with_value:
+            skip_next = True
+            continue
+        if token.startswith("-"):
+            continue
+        scope.append(sanitize_text(token))
+    return ", ".join(scope) if scope else "Project pytest discovery"
+
+
+def _validation_status(
+    category: str,
+    authoritative: bool,
+    exit_code: int | None,
+    response: Any,
+    marker: dict[str, Any],
+) -> str:
+    if not authoritative or exit_code is None:
+        return "unknown"
+    if exit_code == 0:
+        return "passed"
+    if exit_code == 127 or marker.get("error_kind") == "command_not_found":
+        return "command_not_found"
+    if exit_code == 126 or marker.get("error_kind") == "permission_denied":
+        return "infrastructure_error"
+    if category != "test":
+        return "failed"
+    text = json.dumps(response, ensure_ascii=False).lower()
+    if re.search(r"\b\d+\s+failed\b|=+\s*failures\s*=+|assertionerror", text):
+        return "failed"
+    if any(
+        pattern in text
+        for pattern in (
+            "internalerror",
+            "error collecting",
+            "importerror while loading conftest",
+            "modulenotfounderror",
+            "no tests ran",
+            "usage error",
+        )
+    ) or exit_code in {2, 3, 4, 5}:
+        return "infrastructure_error"
+    return "unknown"
+
+
 def extract_validations(events: list[NormalizedEvent]) -> list[ValidationRecord]:
     attempts = {
         event.tool_use_id: event
@@ -68,17 +147,34 @@ def extract_validations(events: list[NormalizedEvent]) -> list[ValidationRecord]
         category = validation_category(event.command)
         if category == "other" and "agentchange-run" not in event.command:
             continue
-        status = {"succeeded": "passed", "failed": "failed"}.get(event.result_status, "unknown")
         authoritative = event.evidence_confidence == "observed" and event.exit_code is not None
+        marker = event.details.get("runner_metadata")
+        marker = marker if isinstance(marker, dict) else {}
+        requested = _command_tokens(event.command, marker, "requested_command")
+        resolved = _command_tokens(event.command, marker, "resolved_command")
+        category = validation_category(" ".join(requested) or event.command)
+        status = _validation_status(
+            category,
+            authoritative,
+            event.exit_code,
+            event.details.get("tool_response"),
+            marker,
+        )
+        display = marker.get("display_command")
+        display = sanitize_text(display) if isinstance(display, str) else make_display_command(resolved)
         records.append(
             ValidationRecord(
                 validation_id=hashlib.sha256(f"{event.event_id}:validation".encode()).hexdigest()[:20],
                 tool_use_id=event.tool_use_id,
                 category=category,
                 command=event.command,
-                status=status if authoritative else "unknown",
+                status=status,
                 authoritative=authoritative,
                 result_source=str(event.details.get("result_source", "not authoritative")),
+                requested_command=requested,
+                resolved_command=resolved,
+                display_command=display,
+                scope=validation_scope(requested or resolved, category),
                 exit_code=event.exit_code if authoritative else None,
                 duration_ms=event.duration_ms if authoritative else None,
                 attempted_event_id=attempts.get(event.tool_use_id).event_id if event.tool_use_id in attempts else None,
@@ -92,7 +188,7 @@ def extract_validations(events: list[NormalizedEvent]) -> list[ValidationRecord]
 
 def overall_validation_status(validations: list[ValidationRecord]) -> str:
     authoritative = [record for record in validations if record.authoritative]
-    if any(record.status == "failed" for record in authoritative):
+    if any(record.status in {"failed", "command_not_found", "infrastructure_error"} for record in authoritative):
         return "failed"
     if authoritative and all(record.status == "passed" for record in authoritative):
         return "passed"
@@ -130,16 +226,20 @@ def analyze_turn(events: list[NormalizedEvent], attribution: dict[str, Any]) -> 
     findings: list[Finding] = []
 
     failed_categories = {record.category for record in validations if record.authoritative and record.status == "failed"}
-    observed_categories = {record.category for record in validations if record.authoritative}
-    unknown_categories = {record.category for record in validations if not record.authoritative}
+    passed_categories = {record.category for record in validations if record.authoritative and record.status == "passed"}
+    uncertain = [record for record in validations if record.status in {"unknown", "command_not_found", "infrastructure_error"}]
     if "test" in failed_categories:
         findings.append(_finding("TESTS_FAILED", "high", "An authoritative same-turn test command failed."))
-    if unknown_categories:
-        findings.append(_finding("TEST_RESULT_UNKNOWN", "medium", "At least one validation attempt had no authoritative result."))
+    if uncertain:
+        findings.append(_finding("TEST_RESULT_UNKNOWN", "medium", "At least one validation attempt did not produce a verified pass/fail result."))
+    if any(record.status == "command_not_found" for record in validations):
+        findings.append(_finding("VALIDATION_COMMAND_NOT_FOUND", "medium", "A validation command could not start because an executable was unavailable."))
+    if any(record.status == "infrastructure_error" for record in validations):
+        findings.append(_finding("VALIDATION_INFRASTRUCTURE_ERROR", "medium", "A validation command encountered an infrastructure or collection error."))
     for category in claims:
         if category in failed_categories:
             findings.append(_finding("TEST_CLAIM_CONTRADICTION", "critical", f"Codex reported that {category} validation passed, but same-turn observed evidence records a failure."))
-        elif category not in observed_categories:
+        elif category not in passed_categories:
             findings.append(_finding("VALIDATION_CLAIM_NOT_VERIFIABLE", "medium", f"Codex reported that {category} validation passed, but no matching authoritative same-turn result was captured."))
 
     classifications = attribution.get("classifications", [])
@@ -186,6 +286,8 @@ def analyze_turn(events: list[NormalizedEvent], attribution: dict[str, Any]) -> 
         "validations": validations,
         "overall_validation_status": overall_validation_status(validations),
         "agent_statement": statement,
+        "requested_task": next((event.prompt for event in events if event.source_event == "UserPromptSubmit" and event.prompt), None),
+        "model": next((event.model for event in reversed(events) if event.model), None),
         "claims": claims,
         "findings": [deduplicated[code] for code in sorted(deduplicated)],
         "introduced_paths": [item["path"] for item in introduced],

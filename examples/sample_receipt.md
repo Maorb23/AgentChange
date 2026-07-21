@@ -1,18 +1,36 @@
-# AgentChange receipt
+# AgentChange Receipt
 
-- Receipt: `acr_f2a4e1813b63651559e8032a`
-- Session: `agentchange-controlled-demo`
-- Turn: `contradiction-turn`
-- Risk: **critical (90/100)**
-- Validation: **failed**
+**Risk:** Critical — 90/100
+**Repository:** repo
+**Branch:** master
+**Model:** demo-model
+**Turn changes:** 1 file
+**Validation:** 0 of 1 observed validation command passed
+**Slack:** Dry run
+
+## Requested task
+
+Add a small authentication helper and test it.
 
 ## Reported by Codex
 
 Implemented the authentication helper. All tests pass.
 
-## Observed validation
+## Observed by AgentChange
 
-- `test`: **failed** — `agentchange-run -- pytest -q` (agentchange-run final marker)
+- Captured 5 supported same-turn lifecycle events.
+- Captured 1 authoritative validation result marker.
+- Validation outcomes below come from runner markers, not from statements in Codex’s answer.
+
+## Files changed during this turn
+
+- `auth.py` — New during this turn
+
+## Validation results
+
+| Type | Scope | Result | Exit code | Duration |
+|---|---|---:|---:|---:|
+| Test | `Project pytest discovery` | Failed | 1 | 0.0 s |
 
 ## Findings
 
@@ -21,19 +39,26 @@ Implemented the authentication helper. All tests pass.
 - **TESTS_FAILED**: An authoritative same-turn test command failed.
 - **TEST_CLAIM_CONTRADICTION**: Codex reported that test validation passed, but same-turn observed evidence records a failure.
 
-## Repository attribution
+## Risk explanation
 
-- `auth.py` — New during this turn
+- Auth Code Changed: +25 points
+- Test Claim Contradiction: +30 points
+- New Untracked File: +10 points
+- Observed Validation Failure: +25 points
 
-## Limitations
+## Evidence limitations
 
 - Hooks observe only supported Codex tool paths and can be disabled or bypassed.
 - Local evidence files can be modified; local Git inspection is not remote attestation.
 - This receipt is evidence, not proof that every action was captured, and AgentChange is not a secure execution sandbox.
 
+## Receipt identifier
+
+`acr_0dce3c424d0e5ec6eaf749e4`
+
 ## Integrity
 
-- `raw_jsonl`: `3785a3a58bb00eae9b4fa711f5d80c749e36a6b136ea3941a4839e9cd1d5a7b9` — exact session events.jsonl bytes read immediately after Stop capture; may include other turns
-- `canonical_analysis`: `b1b5ceff04dc4691570df4617dc24894ed162ca574d4529b61cda03baabe37b0` — canonical same-turn analysis payload before integrity fields
-- `canonical_receipt_body`: `439879e5d556e751f13ad944ff566cc7d9d0ffbc6715551a22fab441621af160` — canonical JSON receipt body excluding the integrity object
-- `markdown_body`: `f57008af53827098c1415d316dd02a55bc73d6df014706d1a54e7da4340b45c6` — UTF-8 Markdown bytes before the Integrity section
+- `raw_jsonl`: `b7b63f0c96c18f3a66aeafeee12b63873d60d4a2cb86b800fcdcbd5202455f69` — exact session events.jsonl bytes read immediately after Stop capture; may include other turns
+- `canonical_analysis`: `925c2bd67253546d583cf71fef43dd84bcd5df9b1763b216a58195739bca6434` — canonical same-turn analysis payload before integrity fields
+- `canonical_receipt_body`: `78ffc4f11345a93ad107514806a2ad53655c106ea8c29d0c77b74d943d793c0a` — canonical JSON receipt body excluding the integrity object
+- `markdown_body`: `1f386f344ec3601f3be367344bc36ba700bed92317a61d6b3116f03f991009bb` — UTF-8 Markdown bytes before the Integrity section

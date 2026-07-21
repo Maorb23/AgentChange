@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentchange"
-version = "0.2.0"
+version = "0.3.0"
 description = "Per-turn evidence-backed change receipts for Codex"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2.7,<3"]
 
 [project.scripts]
+agentchange = "agentchange.cli:main"
 agentchange-run = "agentchange.command_runner:main"
 agentchange-hook = "agentchange.hook_entry:main"
 
@@ -21,3 +22,8 @@ testpaths = ["tests"]
 
 [tool.setuptools]
 packages = ["agentchange", "scripts"]
+
+[tool.setuptools.data-files]
+"share/agentchange/.codex-plugin" = [".codex-plugin/plugin.json"]
+"share/agentchange/hooks" = ["hooks/hooks.json"]
+"share/agentchange/skills/agentchange" = ["skills/agentchange/SKILL.md"]

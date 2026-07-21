@@ -9,9 +9,10 @@ from typing import Any
 
 from .evidence import analyze_turn, load_turn_events
 from .git_analysis import atomic_json, capture_git_snapshot, classify_changes, turn_directory
-from .receipt import build_receipt, write_receipts
+from .receipt import build_receipt, update_delivery_receipt, write_receipts
 from .risk import score_risk
-from .slack import ensure_delivery
+from .slack import ensure_delivery, preview_state, settings
+from .state import remember_plugin_data
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -20,6 +21,24 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         return value if isinstance(value, dict) else None
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def load_finalized_receipt(plugin_data: Path, session_id: str, turn_id: str) -> dict[str, Any] | None:
+    directory = turn_directory(plugin_data, session_id, turn_id)
+    if not (directory / "finalization.json").exists():
+        return None
+    return _read_json(directory / "receipt.json")
+
+
+def claim_ui_continuation(plugin_data: Path, session_id: str, turn_id: str) -> bool:
+    directory = turn_directory(plugin_data, session_id, turn_id)
+    path = directory / "finalization.json"
+    value = _read_json(path)
+    if not value or value.get("state") != "completed" or value.get("ui_continuation_issued"):
+        return False
+    value["ui_continuation_issued"] = True
+    atomic_json(path, value)
+    return True
 
 
 def finalize_turn(plugin_data: Path, payload: dict[str, Any]) -> dict[str, Any]:
@@ -36,7 +55,6 @@ def finalize_turn(plugin_data: Path, payload: dict[str, Any]) -> dict[str, Any]:
         receipt = _read_json(receipt_path)
         if receipt is None:
             raise ValueError("completed receipt is unreadable")
-        ensure_delivery(plugin_data, turn_dir, receipt)
         return receipt
 
     lock_path = turn_dir / "finalization.lock"
@@ -58,16 +76,33 @@ def finalize_turn(plugin_data: Path, payload: dict[str, Any]) -> dict[str, Any]:
         attribution = classify_changes(baseline, final_snapshot)
         analysis = analyze_turn(events, attribution)
         risk = score_risk(analysis, bool(attribution.get("available")))
+        slack_configuration = settings()
         receipt, markdown = build_receipt(
             session_id, turn_id, events_path, events, normalization_errors,
             analysis, attribution, baseline, final_snapshot, risk,
+            preview_state(slack_configuration),
         )
         write_receipts(turn_dir, receipt, markdown)
-        atomic_json(completed_path, {"state": "completed", "receipt_id": receipt["receipt_id"], "generated_at": receipt["generated_at"]})
+        atomic_json(
+            completed_path,
+            {
+                "state": "completed",
+                "receipt_id": receipt["receipt_id"],
+                "generated_at": receipt["generated_at"],
+                "ui_continuation_issued": False,
+            },
+        )
     finally:
         try:
             lock_path.unlink()
         except FileNotFoundError:
             pass
-    ensure_delivery(plugin_data, turn_dir, receipt)
+    delivery = ensure_delivery(
+        plugin_data,
+        turn_dir,
+        receipt,
+        configuration=slack_configuration,
+    )
+    receipt = update_delivery_receipt(turn_dir, receipt, delivery)
+    remember_plugin_data(plugin_data)
     return receipt

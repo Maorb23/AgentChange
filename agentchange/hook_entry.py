@@ -62,15 +62,33 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"AgentChange baseline capture failed after raw capture: {exc}", file=sys.stderr)
 
     if args.action == "finalize":
+        session_id = payload.get("session_id")
+        turn_id = payload.get("turn_id")
+        if payload.get("stop_hook_active") is True:
+            print("{}")
+            return 0
         try:
-            from agentchange.finalizer import finalize_turn
+            from agentchange.finalizer import claim_ui_continuation, finalize_turn, load_finalized_receipt
+            from agentchange.git_analysis import turn_directory
+            from agentchange.receipt import render_ui_continuation_reason
+            from agentchange.slack import ensure_delivery
 
+            existing = load_finalized_receipt(Path(plugin_data), session_id, turn_id)
             receipt = finalize_turn(Path(plugin_data), payload)
+            if existing is not None:
+                ensure_delivery(
+                    Path(plugin_data),
+                    turn_directory(Path(plugin_data), session_id, turn_id),
+                    receipt,
+                )
         except Exception as exc:
             print(f"AgentChange finalization failed after raw Stop capture: {exc}", file=sys.stderr)
             print("{}")
             return 0
-        print(json.dumps(receipt) if args.fixture else "{}")
+        if claim_ui_continuation(Path(plugin_data), session_id, turn_id):
+            print(json.dumps({"decision": "block", "reason": render_ui_continuation_reason(receipt)}))
+        else:
+            print("{}")
     elif args.fixture:
         try:
             from agentchange.normalize import normalize_envelope

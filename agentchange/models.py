@@ -62,9 +62,20 @@ class ValidationRecord(BaseModel):
     tool_use_id: str | None = None
     category: Literal["test", "lint", "build", "type_check", "security", "other"]
     command: str
-    status: Literal["passed", "failed", "unknown"]
+    status: Literal[
+        "passed",
+        "failed",
+        "command_not_found",
+        "infrastructure_error",
+        "unknown",
+        "not_observed",
+    ]
     authoritative: bool
     result_source: str
+    requested_command: list[str] = Field(default_factory=list)
+    resolved_command: list[str] = Field(default_factory=list)
+    display_command: str
+    scope: str
     exit_code: int | None = None
     duration_ms: int | None = None
     attempted_event_id: str | None = None
@@ -83,17 +94,21 @@ class Finding(BaseModel):
 class Receipt(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["2"] = "2"
     receipt_id: str
     session_id: str
     turn_id: str
     generated_at: datetime
     source_labels: dict[str, str]
+    requested_task: dict[str, Any]
     agent_statement: dict[str, Any]
+    observed: dict[str, Any]
     validation: dict[str, Any]
     repository: dict[str, Any]
     findings: list[Finding]
     risk: dict[str, Any]
+    slack: dict[str, Any]
     limitations: list[str]
     event_summary: dict[str, Any]
+    turn_change_count: int
     integrity: dict[str, Any]

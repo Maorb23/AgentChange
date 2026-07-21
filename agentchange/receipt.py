@@ -1,4 +1,4 @@
-"""Deterministic JSON and Markdown receipt construction."""
+"""Deterministic JSON plus clear, accurately scoped Markdown receipts."""
 
 from __future__ import annotations
 
@@ -9,10 +9,12 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from .display import duration_display, sanitize_text, validation_wording
 from .models import Receipt
 from .raw_capture import utc_now
+from .slack import display_state
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 
 def canonical_bytes(value: Any) -> bytes:
@@ -53,6 +55,38 @@ def _analysis_payload(analysis: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _attach_integrity(
+    receipt: dict[str, Any],
+    *,
+    raw_digest: str,
+    analysis_digest: str,
+) -> tuple[dict[str, Any], str]:
+    base = {key: value for key, value in receipt.items() if key != "integrity"}
+    integrity = {
+        "algorithm": "sha256",
+        "raw_jsonl": {
+            "digest": raw_digest,
+            "coverage": "exact session events.jsonl bytes read immediately after Stop capture; may include other turns",
+        },
+        "canonical_analysis": {
+            "digest": analysis_digest,
+            "coverage": "canonical same-turn analysis payload before integrity fields",
+        },
+        "canonical_receipt_body": {
+            "digest": sha256_hex(canonical_bytes(base)),
+            "coverage": "canonical JSON receipt body excluding the integrity object",
+        },
+    }
+    updated = {**base, "integrity": integrity}
+    markdown_body = render_markdown(updated, include_integrity=False)
+    integrity["markdown_body"] = {
+        "digest": sha256_hex(markdown_body.encode("utf-8")),
+        "coverage": "UTF-8 Markdown bytes before the Integrity section",
+    }
+    Receipt.model_validate(updated)
+    return updated, render_markdown(updated, include_integrity=True)
+
+
 def build_receipt(
     session_id: str,
     turn_id: str,
@@ -64,10 +98,9 @@ def build_receipt(
     baseline: dict[str, Any] | None,
     final_snapshot: dict[str, Any],
     risk: dict[str, Any],
+    slack_state: str,
 ) -> tuple[dict[str, Any], str]:
-    generated_at = utc_now()
     raw_bytes = events_path.read_bytes()
-    analysis_payload = _analysis_payload(analysis)
     limitations = [
         "Hooks observe only supported Codex tool paths and can be disabled or bypassed.",
         "Local evidence files can be modified; local Git inspection is not remote attestation.",
@@ -77,87 +110,210 @@ def build_receipt(
         limitations.append(attribution["limitation"])
     if normalization_errors:
         limitations.append("Some same-turn evidence lines could not be normalized; see event_summary.normalization_errors.")
+    classifications = attribution.get("classifications", [])
+    attributed = [
+        item
+        for item in classifications
+        if item.get("classification") in {"New during this turn", "Modified further during this turn", "No longer present at Stop"}
+    ]
+    preexisting_count = sum(item.get("classification") == "Pre-existing change" for item in classifications)
+    validations = [item.model_dump(mode="json") for item in analysis["validations"]]
+    repository_root = final_snapshot.get("repository_root") or (baseline or {}).get("repository_root")
     base = {
         "schema_version": SCHEMA_VERSION,
         "receipt_id": receipt_id(session_id, turn_id),
         "session_id": session_id,
         "turn_id": turn_id,
-        "generated_at": generated_at,
+        "generated_at": utc_now(),
         "source_labels": {
             "observed": "directly captured by a supported hook or authoritative runner marker",
             "inferred": "derived deterministically from observed evidence or local Git state",
-            "reported": "stated by Codex; not treated as observed evidence",
+            "reported": "stated by Codex; never promoted to observed evidence",
             "not_captured": "not available through the supported evidence path",
         },
-        "agent_statement": {"value": analysis["agent_statement"], "source": "reported_by_codex" if analysis["agent_statement"] else "not_captured", "claims": analysis["claims"]},
-        "validation": {"overall_status": analysis["overall_validation_status"], "commands": [item.model_dump(mode="json") for item in analysis["validations"]]},
-        "repository": {"baseline": baseline, "final": final_snapshot, "attribution": attribution},
+        "requested_task": {"value": analysis.get("requested_task"), "source": "observed" if analysis.get("requested_task") else "not_captured"},
+        "agent_statement": {
+            "value": analysis["agent_statement"],
+            "source": "reported_by_codex" if analysis["agent_statement"] else "not_captured",
+            "claims": analysis["claims"],
+        },
+        "observed": {
+            "event_count": len(events),
+            "authoritative_validation_count": sum(item["authoritative"] for item in validations),
+            "runner_markers_are_source_of_validation_results": True,
+        },
+        "validation": {
+            "overall_status": analysis["overall_validation_status"],
+            "summary": validation_wording(validations),
+            "commands": validations,
+        },
+        "repository": {
+            "name": Path(repository_root).name if repository_root else "Not captured",
+            "branch": final_snapshot.get("branch") or (baseline or {}).get("branch"),
+            "baseline": baseline,
+            "final": final_snapshot,
+            "attribution": attribution,
+            "turn_changes": attributed,
+            "preexisting_change_count": preexisting_count,
+        },
         "findings": [item.model_dump(mode="json") for item in analysis["findings"]],
         "risk": risk,
+        "slack": {"state": slack_state},
         "limitations": limitations,
         "event_summary": {
             "event_count": len(events),
+            "model": analysis.get("model"),
             "chronological_event_ids": [event.event_id for event in events],
             "original_line_numbers": [event.line_number for event in events],
             "normalization_errors": normalization_errors,
         },
+        "turn_change_count": len(attributed),
     }
-    receipt_body_digest = sha256_hex(canonical_bytes(base))
-    integrity = {
-        "algorithm": "sha256",
-        "raw_jsonl": {"digest": sha256_hex(raw_bytes), "coverage": "exact session events.jsonl bytes read immediately after Stop capture; may include other turns"},
-        "canonical_analysis": {"digest": sha256_hex(canonical_bytes(analysis_payload)), "coverage": "canonical same-turn analysis payload before integrity fields"},
-        "canonical_receipt_body": {"digest": receipt_body_digest, "coverage": "canonical JSON receipt body excluding the integrity object"},
+    return _attach_integrity(
+        base,
+        raw_digest=sha256_hex(raw_bytes),
+        analysis_digest=sha256_hex(canonical_bytes(_analysis_payload(analysis))),
+    )
+
+
+def update_delivery_receipt(
+    turn_dir: Path,
+    receipt: dict[str, Any],
+    delivery: dict[str, Any],
+) -> dict[str, Any]:
+    receipt = dict(receipt)
+    receipt["slack"] = {
+        key: value
+        for key, value in delivery.items()
+        if key in {"state", "attempts", "http_status", "updated_at", "error"}
     }
-    receipt = {**base, "integrity": integrity}
-    markdown_body = render_markdown(receipt, include_integrity=False)
-    integrity["markdown_body"] = {"digest": sha256_hex(markdown_body.encode("utf-8")), "coverage": "UTF-8 Markdown bytes before the Integrity section"}
-    Receipt.model_validate(receipt)
-    markdown = render_markdown(receipt, include_integrity=True)
-    return receipt, markdown
+    integrity = receipt.get("integrity", {})
+    updated, markdown = _attach_integrity(
+        receipt,
+        raw_digest=integrity.get("raw_jsonl", {}).get("digest", ""),
+        analysis_digest=integrity.get("canonical_analysis", {}).get("digest", ""),
+    )
+    write_receipts(turn_dir, updated, markdown)
+    return updated
 
 
 def render_markdown(receipt: dict[str, Any], *, include_integrity: bool) -> str:
+    risk = receipt["risk"]
+    repository = receipt["repository"]
+    model = receipt["event_summary"].get("model") or "Not captured"
+    change_noun = "file" if receipt["turn_change_count"] == 1 else "files"
+    marker_count = receipt["observed"]["authoritative_validation_count"]
+    marker_noun = "marker" if marker_count == 1 else "markers"
     lines = [
-        "# AgentChange receipt",
+        "# AgentChange Receipt",
         "",
-        f"- Receipt: `{receipt['receipt_id']}`",
-        f"- Session: `{receipt['session_id']}`",
-        f"- Turn: `{receipt['turn_id']}`",
-        f"- Risk: **{receipt['risk']['level']} ({receipt['risk']['score']}/100)**",
-        f"- Validation: **{receipt['validation']['overall_status']}**",
+        f"**Risk:** {risk['level'].title()} — {risk['score']}/100",
+        f"**Repository:** {sanitize_text(repository['name'])}",
+        f"**Branch:** {sanitize_text(repository.get('branch') or 'Not captured')}",
+        f"**Model:** {sanitize_text(model)}",
+        f"**Turn changes:** {receipt['turn_change_count']} {change_noun}",
+        f"**Validation:** {receipt['validation']['summary']}",
+        f"**Slack:** {display_state(receipt['slack']['state'])}",
+        "",
+        "## Requested task",
+        "",
+        sanitize_text(receipt["requested_task"].get("value") or "Not captured."),
         "",
         "## Reported by Codex",
         "",
-        receipt["agent_statement"]["value"] or "Not captured.",
+        sanitize_text(receipt["agent_statement"].get("value") or "Not captured."),
         "",
-        "## Observed validation",
+        "## Observed by AgentChange",
+        "",
+        f"- Captured {receipt['observed']['event_count']} supported same-turn lifecycle events.",
+        f"- Captured {marker_count} authoritative validation result {marker_noun}.",
+        "- Validation outcomes below come from runner markers, not from statements in Codex’s answer.",
+        "",
+        "## Files changed during this turn",
         "",
     ]
+    changes = repository.get("turn_changes", [])
+    if changes:
+        lines.extend(f"- `{sanitize_text(item['path'])}` — {item['classification']}" for item in changes)
+    else:
+        lines.append("- No turn-attributed files were observed.")
+    preexisting_count = repository.get("preexisting_change_count", 0)
+    if preexisting_count:
+        lines.extend(
+            (
+                "",
+                f"The repository already contained {preexisting_count} modified or untracked files before this turn. They were not attributed to Codex.",
+            )
+        )
+    lines.extend(("", "## Validation results", ""))
     commands = receipt["validation"]["commands"]
     if commands:
-        lines.extend(f"- `{item['category']}`: **{item['status']}** — `{item['command']}` ({item['result_source']})" for item in commands)
+        lines.extend(
+            (
+                "| Type | Scope | Result | Exit code | Duration |",
+                "|---|---|---:|---:|---:|",
+            )
+        )
+        for item in commands:
+            result = item["status"].replace("_", " ").title()
+            exit_code = item["exit_code"] if item["exit_code"] is not None else "—"
+            lines.append(
+                f"| {item['category'].replace('_', ' ').title()} | `{sanitize_text(item['scope'])}` | {result} | {exit_code} | {duration_display(item['duration_ms'])} |"
+            )
     else:
-        lines.append("- No relevant validation command was captured.")
-    lines.extend(["", "## Findings", ""])
-    if receipt["findings"]:
-        lines.extend(f"- **{item['code']}**: {item['summary']}" for item in receipt["findings"])
-    else:
-        lines.append("- None.")
-    lines.extend(["", "## Repository attribution", ""])
-    classifications = receipt["repository"]["attribution"]["classifications"]
-    if classifications:
-        lines.extend(f"- `{item['path']}` — {item['classification']}" for item in classifications)
-    else:
-        lines.append("- No working-tree changes observed.")
-    lines.extend(["", "## Limitations", ""])
-    lines.extend(f"- {item}" for item in receipt["limitations"])
+        lines.append("No relevant validation command was observed.")
+    lines.extend(("", "## Findings", ""))
+    prominent = [item for item in receipt["findings"] if item["code"] != "PREEXISTING_REPOSITORY_CHANGES"]
+    lines.extend(f"- **{item['code']}**: {sanitize_text(item['summary'])}" for item in prominent)
+    if not prominent:
+        lines.append("- No material findings.")
+    lines.extend(("", "## Risk explanation", ""))
+    components = risk.get("components", [])
+    lines.extend(f"- {item['rule'].replace('_', ' ').title()}: {item['points']:+d} points" for item in components)
+    if not components:
+        lines.append("- No deterministic risk rules added points.")
+    lines.extend(("", "## Evidence limitations", ""))
+    lines.extend(f"- {sanitize_text(item)}" for item in receipt["limitations"])
+    lines.extend(("", "## Receipt identifier", "", f"`{receipt['receipt_id']}`"))
     if include_integrity:
-        lines.extend(["", "## Integrity", ""])
-        lines.extend(f"- `{name}`: `{value['digest']}` — {value['coverage']}" for name, value in receipt["integrity"].items() if isinstance(value, dict))
+        lines.extend(("", "## Integrity", ""))
+        lines.extend(
+            f"- `{name}`: `{value['digest']}` — {value['coverage']}"
+            for name, value in receipt["integrity"].items()
+            if isinstance(value, dict)
+        )
     return "\n".join(lines) + "\n"
 
 
+def render_ui_summary(receipt: dict[str, Any]) -> str:
+    commands = receipt["validation"]["commands"]
+    change_noun = "file" if receipt["turn_change_count"] == 1 else "files"
+    lines = [
+        "AgentChange Receipt",
+        "",
+        f"Risk: {receipt['risk']['level'].title()} — {receipt['risk']['score']}/100",
+        f"Changes this turn: {receipt['turn_change_count']} {change_noun}",
+        f"Validation: {receipt['validation']['summary']}",
+    ]
+    scopes = [item["scope"] for item in commands if item.get("scope")]
+    if scopes:
+        lines.append(f"Scope: {sanitize_text('; '.join(scopes))}")
+    lines.extend(
+        (
+            f"Slack: {display_state(receipt['slack']['state'])}",
+            f"Receipt: {receipt['receipt_id']}",
+        )
+    )
+    return "\n".join(lines)
+
+
+def render_ui_continuation_reason(receipt: dict[str, Any]) -> str:
+    return "Display this concise receipt summary exactly once, then stop:\n\n" + render_ui_summary(receipt)
+
+
 def write_receipts(turn_dir: Path, receipt: dict[str, Any], markdown: str) -> None:
-    _atomic_bytes(turn_dir / "receipt.json", json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True, default=str).encode("utf-8") + b"\n")
+    _atomic_bytes(
+        turn_dir / "receipt.json",
+        json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True, default=str).encode("utf-8") + b"\n",
+    )
     _atomic_bytes(turn_dir / "receipt.md", markdown.encode("utf-8"))

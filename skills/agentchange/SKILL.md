@@ -8,10 +8,10 @@ description: Use for coding tasks involving repository changes, commands, tests,
 AgentChange records activity observed through supported Codex lifecycle hooks. This skill is an instruction layer, not the evidence source.
 
 1. Understand the requested task before editing.
-2. Run relevant validation where practical. Use `agentchange-run -- <command> [arguments...]` for tests, linters, builds, type checks, and security scans so AgentChange can independently observe the subprocess exit code.
-   - `agentchange-run -- pytest -q`
-   - `agentchange-run -- ruff check .`
-   - `agentchange-run -- npm test`
+2. Run relevant validation where practical. For Python validation, use `agentchange exec --auto <command> [arguments...]` so AgentChange selects the project Python and independently observes the subprocess exit code.
+   - `agentchange exec --auto pytest -q`
+   - `agentchange exec --auto python -m pytest -q tests/test_example.py`
+   - `agentchange exec --auto ruff check .`
    Do not require the wrapper for ordinary read-only commands such as `ls`, `cat`, `sed`, or `git status`.
 3. Never claim tests passed unless a successful result was observed.
 4. State failures and unresolved issues honestly.
@@ -19,6 +19,6 @@ AgentChange records activity observed through supported Codex lifecycle hooks. T
 6. Do not manually send a receipt; the Stop hook creates the per-turn local receipt and handles configured Slack delivery.
 7. Do not modify AgentChange runtime evidence files under `PLUGIN_DATA`.
 
-Validation results are considered independently observed only when executed through `agentchange-run` or when another supported tool provides an explicit reliable result.
+Validation results are considered independently observed only when executed through `agentchange exec --auto`, the backward-compatible `agentchange-run`, or another supported tool that provides an explicit reliable result.
 
 AgentChange evidence is not complete, tamper-proof, a full audit trail, or a secure enforcement boundary.

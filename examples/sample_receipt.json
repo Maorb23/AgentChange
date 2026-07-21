@@ -8,13 +8,14 @@
   },
   "event_summary": {
     "chronological_event_ids": [
-      "963d85ed-7751-4e29-bb70-cd46dbe28cee",
-      "b377a4ca-38bd-460f-b305-38188a5af3bf",
-      "03bff9b9-86a6-437f-abbe-e0c23c4096d3",
-      "1916cf33-8ca1-4756-8b42-957d94bf4f94",
-      "b5c5d639-8d84-4d22-9126-4c89e5a17888"
+      "b7b7b253-e5d2-4649-93b2-eed31cd5dd9e",
+      "d4708324-fe4c-48df-b264-5be287793037",
+      "2dc9b302-169b-4075-be53-7c7209891f06",
+      "f2032cce-2d1b-45bb-b5c8-b829ec847a64",
+      "2e181a04-cbe8-45f7-9319-40ed6f3f3f7b"
     ],
     "event_count": 5,
+    "model": "demo-model",
     "normalization_errors": [],
     "original_line_numbers": [
       1,
@@ -54,24 +55,24 @@
       "summary": "Codex reported that test validation passed, but same-turn observed evidence records a failure."
     }
   ],
-  "generated_at": "2026-07-21T06:31:29.792711Z",
+  "generated_at": "2026-07-21T10:21:06.884763Z",
   "integrity": {
     "algorithm": "sha256",
     "canonical_analysis": {
       "coverage": "canonical same-turn analysis payload before integrity fields",
-      "digest": "b1b5ceff04dc4691570df4617dc24894ed162ca574d4529b61cda03baabe37b0"
+      "digest": "925c2bd67253546d583cf71fef43dd84bcd5df9b1763b216a58195739bca6434"
     },
     "canonical_receipt_body": {
       "coverage": "canonical JSON receipt body excluding the integrity object",
-      "digest": "439879e5d556e751f13ad944ff566cc7d9d0ffbc6715551a22fab441621af160"
+      "digest": "78ffc4f11345a93ad107514806a2ad53655c106ea8c29d0c77b74d943d793c0a"
     },
     "markdown_body": {
       "coverage": "UTF-8 Markdown bytes before the Integrity section",
-      "digest": "f57008af53827098c1415d316dd02a55bc73d6df014706d1a54e7da4340b45c6"
+      "digest": "1f386f344ec3601f3be367344bc36ba700bed92317a61d6b3116f03f991009bb"
     },
     "raw_jsonl": {
       "coverage": "exact session events.jsonl bytes read immediately after Stop capture; may include other turns",
-      "digest": "3785a3a58bb00eae9b4fa711f5d80c749e36a6b136ea3941a4839e9cd1d5a7b9"
+      "digest": "b7b63f0c96c18f3a66aeafeee12b63873d60d4a2cb86b800fcdcbd5202455f69"
     }
   },
   "limitations": [
@@ -79,7 +80,12 @@
     "Local evidence files can be modified; local Git inspection is not remote attestation.",
     "This receipt is evidence, not proof that every action was captured, and AgentChange is not a secure execution sandbox."
   ],
-  "receipt_id": "acr_f2a4e1813b63651559e8032a",
+  "observed": {
+    "authoritative_validation_count": 1,
+    "event_count": 5,
+    "runner_markers_are_source_of_validation_results": true
+  },
+  "receipt_id": "acr_0dce3c424d0e5ec6eaf749e4",
   "repository": {
     "attribution": {
       "available": true,
@@ -96,10 +102,10 @@
     "baseline": {
       "available": true,
       "branch": "master",
-      "captured_at": "2026-07-21T06:31:29.074512Z",
+      "captured_at": "2026-07-21T10:21:06.800001Z",
       "entries": [],
       "file_digests": {},
-      "head": "96527c29f7dece64b04459a90493028a9dfdc285",
+      "head": "f2da85209a050ca83a601d6b9025e10c97fbf563",
       "index_digests": {},
       "porcelain_v1": "",
       "repository_root": "/workspace/agentchange-demo",
@@ -108,10 +114,11 @@
       "unstaged": [],
       "untracked": []
     },
+    "branch": "master",
     "final": {
       "available": true,
       "branch": "master",
-      "captured_at": "2026-07-21T06:31:29.420834Z",
+      "captured_at": "2026-07-21T10:21:06.838679Z",
       "entries": [
         {
           "original_path": null,
@@ -120,9 +127,9 @@
         }
       ],
       "file_digests": {
-        "auth.py": "3ae938df10a5825f8a129f236fe807893522931dc82a62bf948c9aff7ae98805"
+        "auth.py": "3646c1faa9c99b1c9e29207c32191631bf007254ddd1f55c1b6d8548c1e8d674"
       },
-      "head": "96527c29f7dece64b04459a90493028a9dfdc285",
+      "head": "f2da85209a050ca83a601d6b9025e10c97fbf563",
       "index_digests": {},
       "porcelain_v1": "?? auth.py\u0000",
       "repository_root": "/workspace/agentchange-demo",
@@ -132,7 +139,21 @@
       "untracked": [
         "auth.py"
       ]
-    }
+    },
+    "name": "repo",
+    "preexisting_change_count": 0,
+    "turn_changes": [
+      {
+        "baseline_status": null,
+        "classification": "New during this turn",
+        "final_status": "??",
+        "path": "auth.py"
+      }
+    ]
+  },
+  "requested_task": {
+    "source": "observed",
+    "value": "Add a small authentication helper and test it."
   },
   "risk": {
     "components": [
@@ -157,33 +178,50 @@
     "method": "deterministic rules v1",
     "score": 90
   },
-  "schema_version": "1",
+  "schema_version": "2",
   "session_id": "agentchange-controlled-demo",
+  "slack": {
+    "attempts": 0,
+    "state": "dry_run",
+    "updated_at": "2026-07-21T10:21:06.900735Z"
+  },
   "source_labels": {
     "inferred": "derived deterministically from observed evidence or local Git state",
     "not_captured": "not available through the supported evidence path",
     "observed": "directly captured by a supported hook or authoritative runner marker",
-    "reported": "stated by Codex; not treated as observed evidence"
+    "reported": "stated by Codex; never promoted to observed evidence"
   },
+  "turn_change_count": 1,
   "turn_id": "contradiction-turn",
   "validation": {
     "commands": [
       {
-        "attempted_event_id": "03bff9b9-86a6-437f-abbe-e0c23c4096d3",
+        "attempted_event_id": "2dc9b302-169b-4075-be53-7c7209891f06",
         "authoritative": true,
         "category": "test",
         "command": "agentchange-run -- pytest -q",
-        "completed_event_id": "1916cf33-8ca1-4756-8b42-957d94bf4f94",
+        "completed_event_id": "f2032cce-2d1b-45bb-b5c8-b829ec847a64",
+        "display_command": "pytest -q",
         "duration_ms": 29,
         "exit_code": 1,
         "line_number": 4,
+        "requested_command": [
+          "pytest",
+          "-q"
+        ],
+        "resolved_command": [
+          "pytest",
+          "-q"
+        ],
         "result_source": "agentchange-run final marker",
+        "scope": "Project pytest discovery",
         "status": "failed",
-        "timestamp": "2026-07-21T06:31:29.371047Z",
+        "timestamp": "2026-07-21T10:21:06.829871Z",
         "tool_use_id": "tests",
-        "validation_id": "027e313fa76f44596e20"
+        "validation_id": "71c683e6cb15805149c3"
       }
     ],
-    "overall_status": "failed"
+    "overall_status": "failed",
+    "summary": "0 of 1 observed validation command passed"
   }
 }
