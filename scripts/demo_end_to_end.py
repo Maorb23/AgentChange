@@ -85,7 +85,17 @@ def run_demo(output: Path, export_examples: bool) -> Path:
         ),
         data,
     )
-    stop = _payload(repo, "Stop", stop_hook_active=False, last_assistant_message="Implemented the authentication helper. All tests pass.")
+    stop = _payload(
+        repo,
+        "Stop",
+        stop_hook_active=False,
+        last_assistant_message=(
+            "Implemented the authentication helper. All tests pass.\n\n"
+            "AGENTCHANGE_CHANGE_SUMMARY_JSON\n"
+            '{"file_summaries":[{"path":"auth.py","summary":"Added a small authentication helper."}]}\n'
+            "END_AGENTCHANGE_CHANGE_SUMMARY_JSON"
+        ),
+    )
     capture_payload(stop, data)
     receipt = finalize_turn(data, stop)
     receipt_dir = turn_directory(data, session_id, turn_id)

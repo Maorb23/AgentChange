@@ -16,7 +16,7 @@ from agentchange.git_analysis import turn_directory
 from agentchange.hook_entry import main as hook_main
 from agentchange.installer import VERSION, install, remove_stale_agentchange_caches, stop_hook_verified
 from agentchange.normalize import normalize_envelope
-from agentchange.receipt import render_markdown, render_ui_summary
+from agentchange.receipt import render_markdown, render_ui_continuation_reason, render_ui_summary
 from agentchange.slack import SlackSettings, ensure_delivery
 
 
@@ -353,6 +353,16 @@ def test_ui_summary_is_concise_and_path_safe():
     assert "/home/" not in summary
 
 
+def test_ui_continuation_renders_the_full_terminal_receipt():
+    receipt = _receipt()
+    reason = render_ui_continuation_reason(receipt)
+
+    assert reason == (
+        "Display this full AgentChange receipt exactly once, then stop:\n\n"
+        + render_markdown(receipt, include_integrity=True)
+    )
+
+
 def test_only_one_stop_continuation_is_claimed(tmp_path):
     turn = turn_directory(tmp_path, "session", "turn")
     turn.mkdir(parents=True)
@@ -413,8 +423,10 @@ def test_first_stop_returns_one_documented_continuation(tmp_path, monkeypatch, c
     assert hook_main(arguments) == 0
     first = json.loads(capsys.readouterr().out)
     assert first["decision"] == "block"
-    assert first["reason"].startswith("Display this concise receipt summary exactly once")
-    assert "\n\nAgentChange Receipt\n" in first["reason"]
+    assert first["reason"].startswith("Display this full AgentChange receipt exactly once")
+    assert "\n\n# AgentChange Receipt\n" in first["reason"]
+    assert "## Requested task" in first["reason"]
+    assert "## Integrity" in first["reason"]
     assert hook_main(arguments) == 0
     assert capsys.readouterr().out.strip() == "{}"
     assert finalizations == ["finalized", "finalized"]

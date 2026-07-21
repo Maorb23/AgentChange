@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentchange"
-version = "0.3.2"
+version = "0.3.3"
 description = "Per-turn evidence-backed change receipts for Codex"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2.7,<3"]

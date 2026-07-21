@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import difflib
 import json
 import os
 import subprocess
@@ -13,6 +14,11 @@ from typing import Any
 from .raw_capture import derive_session_key, derive_turn_key, utc_now
 
 ATTRIBUTION_LIMITATION = "Repository changes observed at Stop; turn-level attribution unavailable."
+_TURN_CLASSIFICATIONS = {
+    "New during this turn",
+    "Modified further during this turn",
+    "No longer present at Stop",
+}
 
 
 def atomic_json(path: Path, value: Any) -> None:
@@ -142,12 +148,120 @@ def ensure_git_baseline(plugin_data: Path, session_id: str, turn_id: str, cwd: s
     os.close(descriptor)
     try:
         if not path.exists():
-            atomic_json(path, capture_git_snapshot(cwd))
+            snapshot = capture_git_snapshot(cwd)
+            if snapshot.get("available"):
+                blobs_dir = path.parent / "git_baseline_blobs"
+                blob_map: dict[str, str | None] = {}
+                root = Path(str(snapshot["repository_root"])).resolve()
+                for entry in snapshot.get("entries", []):
+                    relative = str(entry.get("path", ""))
+                    candidate = (root / relative).resolve()
+                    try:
+                        candidate.relative_to(root)
+                    except ValueError:
+                        continue
+                    if not candidate.is_file():
+                        blob_map[relative] = None
+                        continue
+                    content = candidate.read_bytes()
+                    blob_name = hashlib.sha256(content).hexdigest() + ".blob"
+                    blobs_dir.mkdir(parents=True, exist_ok=True)
+                    blob_path = blobs_dir / blob_name
+                    if not blob_path.exists():
+                        blob_path.write_bytes(content)
+                    blob_map[relative] = blob_name
+                snapshot["working_tree_blobs"] = blob_map
+            atomic_json(path, snapshot)
     finally:
         try:
             lock.unlink()
         except FileNotFoundError:
             pass
+    return path
+
+
+def _safe_worktree_file(root: Path, relative: str) -> Path | None:
+    candidate = (root / relative).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate
+
+
+def _baseline_content(turn_dir: Path, baseline: dict[str, Any], relative: str) -> bytes | None:
+    baseline_paths = {str(item.get("path")) for item in baseline.get("entries", [])}
+    if relative in baseline_paths:
+        blob_name = baseline.get("working_tree_blobs", {}).get(relative)
+        if not isinstance(blob_name, str):
+            return None
+        try:
+            return (turn_dir / "git_baseline_blobs" / blob_name).read_bytes()
+        except OSError:
+            return None
+    root = baseline.get("repository_root")
+    head = baseline.get("head")
+    if not isinstance(root, str) or not isinstance(head, str):
+        return None
+    try:
+        return _git(root, "show", f"{head}:{relative}")
+    except RuntimeError:
+        return None
+
+
+def _unified_file_diff(relative: str, before: bytes | None, after: bytes | None) -> bytes:
+    if before == after:
+        return b""
+    header = f"diff --git a/{relative} b/{relative}\n"
+    if before is not None and b"\0" in before or after is not None and b"\0" in after:
+        return (header + f"Binary files a/{relative} and b/{relative} differ\n").encode("utf-8")
+    before_text = "" if before is None else before.decode("utf-8", errors="surrogateescape")
+    after_text = "" if after is None else after.decode("utf-8", errors="surrogateescape")
+    lines = difflib.unified_diff(
+        before_text.splitlines(keepends=True),
+        after_text.splitlines(keepends=True),
+        fromfile="/dev/null" if before is None else f"a/{relative}",
+        tofile="/dev/null" if after is None else f"b/{relative}",
+        lineterm="\n",
+    )
+    body = "".join(lines)
+    return (header + body).encode("utf-8", errors="surrogateescape")
+
+
+def write_turn_diff(
+    turn_dir: Path,
+    baseline: dict[str, Any] | None,
+    final: dict[str, Any],
+    attribution: dict[str, Any],
+) -> Path:
+    """Write the exact working-tree content delta for files attributed to this turn."""
+
+    path = turn_dir / "turn.diff"
+    if not baseline or not baseline.get("available") or not final.get("available"):
+        path.write_bytes(b"")
+        return path
+    root_value = final.get("repository_root") or baseline.get("repository_root")
+    if not isinstance(root_value, str):
+        path.write_bytes(b"")
+        return path
+    root = Path(root_value).resolve()
+    chunks: list[bytes] = []
+    for item in attribution.get("classifications", []):
+        if item.get("classification") not in _TURN_CLASSIFICATIONS:
+            continue
+        relative = str(item.get("path", ""))
+        candidate = _safe_worktree_file(root, relative)
+        if candidate is None:
+            continue
+        before = _baseline_content(turn_dir, baseline, relative)
+        try:
+            after = candidate.read_bytes() if candidate.is_file() else None
+        except OSError:
+            after = None
+        chunks.append(_unified_file_diff(relative, before, after))
+    temporary = path.with_suffix(".diff.tmp")
+    temporary.write_bytes(b"".join(chunks))
+    os.replace(temporary, path)
     return path
 
 

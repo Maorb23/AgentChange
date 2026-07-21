@@ -14,7 +14,7 @@ from typing import Callable
 
 from .environment import detect_platform, find_executable
 
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 PLUGIN_NAME = "agentchange"
 COPY_PATHS = (".codex-plugin", "hooks", "skills", "agentchange", "scripts", "pyproject.toml", "README.md")
 

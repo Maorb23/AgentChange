@@ -10,7 +10,7 @@ import shlex
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .models import Finding, NormalizedEvent, ValidationRecord
+from .models import Finding, ModelDerivedChangeSummary, NormalizedEvent, ValidationRecord
 from .normalize import normalize_envelope
 from .display import display_command as make_display_command, sanitize_text
 
@@ -22,6 +22,95 @@ _CLAIMS = [
 _CODE_SUFFIXES = {
     ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".kt", ".c", ".cc", ".cpp", ".h", ".hpp", ".rb", ".php", ".cs", ".swift",
 }
+_CHANGE_SUMMARY_START = "AGENTCHANGE_CHANGE_SUMMARY_JSON"
+_CHANGE_SUMMARY_END = "END_AGENTCHANGE_CHANGE_SUMMARY_JSON"
+_MAX_CHANGE_SUMMARY_LENGTH = 240
+
+
+def _repository_relative_summary_path(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    candidate = value.strip().replace("\\", "/")
+    if candidate.startswith("/") or re.match(r"^[A-Za-z]:/", candidate):
+        return None
+    if ".." in candidate.split("/"):
+        return None
+    normalized = posixpath.normpath(candidate)
+    if normalized in {"", ".", ".."} or normalized.startswith("../"):
+        return None
+    return normalized.removeprefix("./")
+
+
+def extract_model_derived_change_summary(
+    statement: str | None,
+    turn_changes: list[dict[str, Any]],
+) -> ModelDerivedChangeSummary:
+    """Parse and constrain Codex's model-derived summaries to attributed paths."""
+
+    if not statement:
+        return ModelDerivedChangeSummary(status="not_provided")
+    starts = list(
+        re.finditer(rf"(?m)^[ \t]*{re.escape(_CHANGE_SUMMARY_START)}[ \t]*$", statement)
+    )
+    if not starts:
+        return ModelDerivedChangeSummary(status="not_provided")
+    start = starts[-1].end()
+    end_match = re.search(
+        rf"(?m)^[ \t]*{re.escape(_CHANGE_SUMMARY_END)}[ \t]*$", statement[start:]
+    )
+    if end_match is None:
+        return ModelDerivedChangeSummary(status="invalid")
+    end = start + end_match.start()
+    raw = statement[start:end].strip()
+    if raw.startswith("```json") and raw.endswith("```"):
+        raw = raw[len("```json") : -len("```")].strip()
+    try:
+        value = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return ModelDerivedChangeSummary(status="invalid")
+    if not isinstance(value, dict) or not isinstance(value.get("file_summaries"), list):
+        return ModelDerivedChangeSummary(status="invalid")
+
+    allowed = {
+        normalized: str(item["path"])
+        for item in turn_changes
+        if item.get("classification")
+        in {"New during this turn", "Modified further during this turn", "No longer present at Stop"}
+        and (normalized := _repository_relative_summary_path(item.get("path"))) is not None
+    }
+    summaries = []
+    seen: set[str] = set()
+    discarded = 0
+    for item in value["file_summaries"]:
+        if not isinstance(item, dict):
+            discarded += 1
+            continue
+        path = _repository_relative_summary_path(item.get("path"))
+        summary = item.get("summary")
+        if (
+            path not in allowed
+            or path in seen
+            or not isinstance(summary, str)
+            or not summary.strip()
+        ):
+            discarded += 1
+            continue
+        plain_summary = " ".join(summary.split())
+        if (
+            len(plain_summary) > _MAX_CHANGE_SUMMARY_LENGTH
+            or re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", plain_summary)
+        ):
+            discarded += 1
+            continue
+        summaries.append({"path": allowed[path], "summary": plain_summary})
+        seen.add(path)
+
+    status = "provided" if summaries or not allowed else "invalid"
+    return ModelDerivedChangeSummary(
+        status=status,
+        file_summaries=summaries,
+        discarded_entry_count=discarded,
+    )
 
 
 def load_turn_events(events_path: Path, turn_id: str) -> tuple[list[NormalizedEvent], list[str]]:
@@ -341,6 +430,7 @@ def analyze_turn(events: list[NormalizedEvent], attribution: dict[str, Any]) -> 
         findings.append(_finding("GIT_CHANGE_WITHOUT_OBSERVED_WRITE", "low", "No matching write event was captured.", missing_write))
 
     deduplicated = {finding.code: finding for finding in findings}
+    model_derived_change_summary = extract_model_derived_change_summary(statement, classifications)
     return {
         "events": events,
         "validations": validations,
@@ -350,6 +440,7 @@ def analyze_turn(events: list[NormalizedEvent], attribution: dict[str, Any]) -> 
         "model": next((event.model for event in reversed(events) if event.model), None),
         "claims": claims,
         "findings": [deduplicated[code] for code in sorted(deduplicated)],
+        "model_derived_change_summary": model_derived_change_summary,
         "introduced_paths": [item["path"] for item in introduced],
         "substantive_paths": substantive,
         "docs_only": bool(introduced) and all(PurePosixPath(item["path"].lower()).suffix in {".md", ".rst", ".txt"} for item in introduced),

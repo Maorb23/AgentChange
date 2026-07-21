@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from .evidence import analyze_turn, load_turn_events
-from .git_analysis import atomic_json, capture_git_snapshot, classify_changes, turn_directory
+from .git_analysis import (
+    atomic_json,
+    capture_git_snapshot,
+    classify_changes,
+    turn_directory,
+    write_turn_diff,
+)
 from .receipt import build_receipt, update_delivery_receipt, write_receipts
 from .risk import score_risk
 from .slack import ensure_delivery, preview_state, settings
@@ -74,6 +80,7 @@ def finalize_turn(plugin_data: Path, payload: dict[str, Any]) -> dict[str, Any]:
         final_snapshot = capture_git_snapshot(cwd)
         atomic_json(turn_dir / "git_final.json", final_snapshot)
         attribution = classify_changes(baseline, final_snapshot)
+        write_turn_diff(turn_dir, baseline, final_snapshot, attribution)
         analysis = analyze_turn(events, attribution)
         risk = score_risk(analysis, bool(attribution.get("available")))
         slack_configuration = settings()

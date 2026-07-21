@@ -163,6 +163,7 @@ def test_stop_finalization_is_local_first_turn_scoped_and_idempotent(tmp_path, m
     def local_first(plugin_data, directory, receipt, **kwargs):
         assert (directory / "receipt.json").exists()
         assert (directory / "receipt.md").exists()
+        assert (directory / "turn.diff").exists()
         assert (directory / "finalization.json").exists()
         delivery_checks.append(receipt["receipt_id"])
         return {"state": "not_configured"}

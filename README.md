@@ -58,7 +58,9 @@ A receipt says `1 of 1 observed validation commands passed`, with the selected s
 
 Personal absolute paths and webhook URLs are removed from Markdown, the Codex summary, and Slack. Exact command arrays remain in the local JSON receipt. Pre-existing dirty files stay in detailed JSON attribution but appear in Markdown only as a compact count.
 
-On the first Stop, AgentChange saves JSON and Markdown before Slack delivery, then returns one documented Stop continuation containing a concise receipt. The continuation Stop sees `stop_hook_active`, exits normally, and does not regenerate, revalidate, or resend.
+For each attributed file, Codex may provide a concise description generated from its review of the same-turn Git diff. These descriptions are stored under `model_derived_change_summary` and are clearly separated from observed file paths; they are never promoted to observed evidence. Invented, absolute, traversal, duplicate, pre-existing, or overly long entries are discarded. If the structured summary is absent or invalid, receipt generation continues with an explicit fallback message.
+
+On the first Stop, AgentChange saves the isolated same-turn patch as `turn.diff`, then saves JSON and Markdown before Slack delivery and returns one documented Stop continuation containing a concise receipt. The continuation Stop sees `stop_hook_active`, exits normally, and does not regenerate, revalidate, or resend.
 
 ## Slack
 
