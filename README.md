@@ -1,31 +1,47 @@
-# AgentChange for Codex
+# AgentChange
 
-AgentChange creates an evidence-backed receipt after each completed Codex coding turn. It records supported lifecycle events, independently observes selected validation commands, attributes local Git changes, applies deterministic risk rules, displays a concise receipt once in Codex, and can send a sanitized summary to Slack.
+Evidence-backed change receipts for Codex coding sessions.
 
-Phase 3 supports native Linux and WSL2 with Codex configured to run in WSL. It is designed for Python projects using pytest and common Python validation tools. It does not support Windows-native Codex agents.
+AgentChange records what Codex changed, which supported validation commands actually ran, and what the local Git state shows at the end of a turn. It produces a readable Markdown receipt, a structured JSON receipt, and an optional sanitized Slack summary.
+
+AgentChange is an evidence and reporting tool—not a sandbox, security boundary, or replacement for code review.
+
+## Requirements
+
+- Python 3.11 or newer
+- Codex running on native Linux or in WSL2
+- A Git repository for turn-level file attribution
+
+The current release is designed for Python projects and common Python validation workflows. Windows-native Codex agents are not supported.
 
 ## Install
 
-Install the Python package once using your preferred Linux user-level package mechanism, then product setup is two commands:
+Install the package using your preferred Linux user-level Python package workflow. From a source checkout, an editable install is convenient during development:
+
+```bash
+python -m pip install -e .
+```
+
+Then install and verify the Codex integration:
 
 ```bash
 agentchange install
 agentchange doctor
 ```
 
-`agentchange install` registers or updates `agentchange@personal`, removes only stale AgentChange plugin caches, verifies the `agentchange-hook finalize` Stop hook, preserves plugin data, and never uses `sudo`. It is safe to run again after an upgrade.
+`agentchange install` registers or updates the personal Codex plugin, removes only stale AgentChange plugin caches, verifies the Stop hook, preserves plugin data, and never uses `sudo`. It is safe to run again after an upgrade.
 
 Restart Codex after installation and approve the six AgentChange lifecycle hooks if prompted. The hooks use executables on the WSL/Linux PATH; users do not need to configure Python virtual-environment paths or edit hook JSON.
 
-## Daily use
+## Use with Codex
 
-Work normally in Codex. The AgentChange skill directs Python validation through:
+Work normally in Codex. When you validate Python code, use the AgentChange wrapper:
 
 ```bash
 agentchange exec --auto pytest -q
 ```
 
-Both `pytest ...` and `python -m pytest ...` are resolved to the detected project Python in this order:
+Both `pytest ...` and `python -m pytest ...` are resolved to the project Python in this order:
 
 1. Active `VIRTUAL_ENV`.
 2. `.venv/bin/python` in the project.
@@ -43,9 +59,21 @@ agentchange status
 agentchange exec --auto pytest -q tests/test_example.py
 ```
 
-`latest` prints the newest Markdown receipt. `status` summarizes the installed version, hook readiness, Slack state, newest session and receipt, and incomplete finalizations. Runtime locations remain an implementation detail.
+`latest` prints the newest Markdown receipt. `status` summarizes installation, hook readiness, Slack state, the newest receipt, and incomplete finalizations. Runtime locations are intentionally kept as an implementation detail.
 
-## What a receipt says
+## What AgentChange records
+
+At the end of a turn, AgentChange can report:
+
+- Files added, modified, deleted, or renamed during the turn, including non-Python files such as HTML, CSS, JavaScript, JSON, and Markdown.
+- A same-turn Git diff and path-level attribution.
+- Validation commands and their observed exit codes when run through `agentchange exec --auto`.
+- Reported claims from Codex, clearly separated from independently observed evidence.
+- Deterministic risk findings for issues such as failed validation, new files, permission requests, and claim contradictions.
+
+Files already dirty before the turn are retained in detailed attribution but are not counted as Codex changes.
+
+## Receipts
 
 Receipts deliberately separate four source classes:
 
@@ -82,7 +110,7 @@ export AGENTCHANGE_UI_MODE=summary     # off, summary (default), or full
 
 `off` always returns normally after saving the local receipt. `always` shows a receipt for every turn. `full` is a debugging option that displays the complete Markdown receipt and consumes more context.
 
-## Slack
+## Slack notifications
 
 Slack uses an incoming webhook; no bot, OAuth flow, backend, or hosted AgentChange service is required. Keep the webhook outside Git and provide it to the Codex WSL/Linux environment:
 
@@ -122,7 +150,7 @@ agentchange doctor
 
 Automated Slack tests mock all network requests. Never use a real webhook in the test suite.
 
-## Known limitations
+## Limitations
 
 - Hooks observe only supported Codex tool paths. Hosted or specialized tools and actions outside Codex may not be captured.
 - Hooks can be disabled or bypassed; local evidence and receipts can be modified.
