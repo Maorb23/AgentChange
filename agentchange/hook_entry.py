@@ -72,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
             from agentchange.git_analysis import turn_directory
             from agentchange.receipt import render_ui_continuation_reason
             from agentchange.slack import ensure_delivery
+            from agentchange.ui import settings as ui_settings, should_display
 
             existing = load_finalized_receipt(Path(plugin_data), session_id, turn_id)
             receipt = finalize_turn(Path(plugin_data), payload)
@@ -85,8 +86,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"AgentChange finalization failed after raw Stop capture: {exc}", file=sys.stderr)
             print("{}")
             return 0
-        if claim_ui_continuation(Path(plugin_data), session_id, turn_id):
-            print(json.dumps({"decision": "block", "reason": render_ui_continuation_reason(receipt)}))
+        ui_configuration = ui_settings()
+        if should_display(receipt, ui_configuration) and claim_ui_continuation(Path(plugin_data), session_id, turn_id):
+            print(
+                json.dumps(
+                    {
+                        "decision": "block",
+                        "reason": render_ui_continuation_reason(receipt, mode=ui_configuration.mode),
+                    }
+                )
+            )
         else:
             print("{}")
     elif args.fixture:

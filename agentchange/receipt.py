@@ -338,16 +338,12 @@ def render_ui_summary(receipt: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def render_ui_continuation_reason(receipt: dict[str, Any]) -> str:
-    """Render the same complete receipt shown by ``agentchange latest`` for Codex.
-
-    The Stop hook uses this continuation reason as the conversation-end display.
-    Keeping it on the Markdown renderer prevents the terminal and conversation
-    views from drifting apart.
-    """
-    return "Display this full AgentChange receipt exactly once, then stop:\n\n" + render_markdown(
-        receipt, include_integrity=True
-    )
+def render_ui_continuation_reason(receipt: dict[str, Any], *, mode: str = "summary") -> str:
+    if mode == "full":
+        return "Display this full AgentChange receipt exactly once, then stop:\n\n" + render_markdown(
+            receipt, include_integrity=True
+        )
+    return render_ui_summary(receipt)
 
 
 def write_receipts(turn_dir: Path, receipt: dict[str, Any], markdown: str) -> None:

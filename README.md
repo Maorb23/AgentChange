@@ -62,6 +62,26 @@ For each attributed file, Codex may provide a concise description generated from
 
 On the first Stop, AgentChange saves the isolated same-turn patch as `turn.diff`, then saves JSON and Markdown before Slack delivery and returns one documented Stop continuation containing a concise receipt. The continuation Stop sees `stop_hook_active`, exits normally, and does not regenerate, revalidate, or resend.
 
+### UI receipt controls
+
+After `agentchange install`, start a new Codex task (or restart Codex). No UI environment variables are required for the recommended default:
+
+```text
+AGENTCHANGE_UI_ON=changes
+AGENTCHANGE_UI_MODE=summary
+```
+
+This default avoids an extra Codex continuation for ordinary diagnostic turns. It shows one concise receipt only when AgentChange observed a turn-attributed file change. Validation-only turns remain in local evidence without consuming an extra Codex continuation.
+
+Override the defaults only when needed, using environment variables available to the WSL environment that runs Codex:
+
+```bash
+export AGENTCHANGE_UI_ON=changes       # changes (default) or always
+export AGENTCHANGE_UI_MODE=summary     # off, summary (default), or full
+```
+
+`off` always returns normally after saving the local receipt. `always` shows a receipt for every turn. `full` is a debugging option that displays the complete Markdown receipt and consumes more context.
+
 ## Slack
 
 Slack uses an incoming webhook; no bot, OAuth flow, backend, or hosted AgentChange service is required. Keep the webhook outside Git and provide it to the Codex WSL/Linux environment:

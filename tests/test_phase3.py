@@ -18,6 +18,7 @@ from agentchange.installer import VERSION, install, remove_stale_agentchange_cac
 from agentchange.normalize import normalize_envelope
 from agentchange.receipt import render_markdown, render_ui_continuation_reason, render_ui_summary
 from agentchange.slack import SlackSettings, ensure_delivery
+from agentchange.ui import settings as ui_settings, should_display
 
 
 def _event(command: str, response: str):
@@ -353,14 +354,34 @@ def test_ui_summary_is_concise_and_path_safe():
     assert "/home/" not in summary
 
 
-def test_ui_continuation_renders_the_full_terminal_receipt():
+def test_ui_continuation_defaults_to_a_concise_summary_and_supports_full_debug_mode():
     receipt = _receipt()
-    reason = render_ui_continuation_reason(receipt)
+    summary_reason = render_ui_continuation_reason(receipt)
+    full_reason = render_ui_continuation_reason(receipt, mode="full")
 
-    assert reason == (
+    assert summary_reason == (
+        "Display this concise receipt summary exactly once, then stop:\n\n"
+        + render_ui_summary(receipt)
+    )
+    assert full_reason == (
         "Display this full AgentChange receipt exactly once, then stop:\n\n"
         + render_markdown(receipt, include_integrity=True)
     )
+
+
+def test_ui_settings_default_to_summary_for_observed_changes_only():
+    default = ui_settings({})
+    assert (default.mode, default.on) == ("summary", "changes")
+    assert should_display(_receipt(), default)
+    noop = _receipt()
+    noop["turn_change_count"] = 0
+    assert not should_display(noop, default)  # Validation evidence alone does not interrupt Codex.
+    noop["observed"]["authoritative_validation_count"] = 0
+    noop["validation"]["commands"] = []
+    assert not should_display(noop, default)
+    assert should_display(noop, ui_settings({"AGENTCHANGE_UI_ON": "always"}))
+    assert not should_display(_receipt(), ui_settings({"AGENTCHANGE_UI_MODE": "off"}))
+    assert ui_settings({"AGENTCHANGE_UI_MODE": "invalid", "AGENTCHANGE_UI_ON": "invalid"}) == default
 
 
 def test_only_one_stop_continuation_is_claimed(tmp_path):
@@ -409,6 +430,8 @@ def test_first_stop_returns_one_documented_continuation(tmp_path, monkeypatch, c
         encoding="utf-8",
     )
     receipt = _receipt()
+    monkeypatch.delenv("AGENTCHANGE_UI_MODE", raising=False)
+    monkeypatch.delenv("AGENTCHANGE_UI_ON", raising=False)
     claims = iter((True, False))
     finalizations = []
     monkeypatch.setattr("agentchange.finalizer.load_finalized_receipt", lambda *_: None)
@@ -423,13 +446,94 @@ def test_first_stop_returns_one_documented_continuation(tmp_path, monkeypatch, c
     assert hook_main(arguments) == 0
     first = json.loads(capsys.readouterr().out)
     assert first["decision"] == "block"
-    assert first["reason"].startswith("Display this full AgentChange receipt exactly once")
-    assert "\n\n# AgentChange Receipt\n" in first["reason"]
-    assert "## Requested task" in first["reason"]
-    assert "## Integrity" in first["reason"]
+    assert first["reason"].startswith("Display this concise receipt summary exactly once")
+    assert "\n\nAgentChange Receipt\n" in first["reason"]
+    assert "## Requested task" not in first["reason"]
+    assert "## Integrity" not in first["reason"]
     assert hook_main(arguments) == 0
     assert capsys.readouterr().out.strip() == "{}"
     assert finalizations == ["finalized", "finalized"]
+
+
+def test_noop_stop_finalizes_but_never_creates_a_ui_continuation(tmp_path, monkeypatch, capsys):
+    fixture = tmp_path / "stop.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "session_id": "session",
+                "turn_id": "turn",
+                "cwd": str(tmp_path),
+                "hook_event_name": "Stop",
+                "stop_hook_active": False,
+                "last_assistant_message": "Diagnostic answer.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    noop = _receipt()
+    noop["turn_change_count"] = 0
+    monkeypatch.delenv("AGENTCHANGE_UI_MODE", raising=False)
+    monkeypatch.delenv("AGENTCHANGE_UI_ON", raising=False)
+    monkeypatch.setattr("agentchange.finalizer.load_finalized_receipt", lambda *_: None)
+    monkeypatch.setattr("agentchange.finalizer.finalize_turn", lambda *_: noop)
+    monkeypatch.setattr("agentchange.finalizer.claim_ui_continuation", lambda *_: pytest.fail("must not continue"))
+    monkeypatch.setattr("agentchange.git_analysis.ensure_git_baseline", lambda *_: None)
+    assert hook_main(["finalize", "--fixture", str(fixture), "--plugin-data", str(tmp_path / "data")]) == 0
+    assert capsys.readouterr().out.strip() == "{}"
+
+
+def test_ui_mode_off_suppresses_a_changed_turn_continuation(tmp_path, monkeypatch, capsys):
+    fixture = tmp_path / "stop.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "session_id": "session",
+                "turn_id": "turn",
+                "cwd": str(tmp_path),
+                "hook_event_name": "Stop",
+                "stop_hook_active": False,
+                "last_assistant_message": "Changed a file.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENTCHANGE_UI_MODE", "off")
+    monkeypatch.setattr("agentchange.finalizer.load_finalized_receipt", lambda *_: None)
+    monkeypatch.setattr("agentchange.finalizer.finalize_turn", lambda *_: _receipt())
+    monkeypatch.setattr("agentchange.finalizer.claim_ui_continuation", lambda *_: pytest.fail("must not continue"))
+    monkeypatch.setattr("agentchange.git_analysis.ensure_git_baseline", lambda *_: None)
+    assert hook_main(["finalize", "--fixture", str(fixture), "--plugin-data", str(tmp_path / "data")]) == 0
+    assert capsys.readouterr().out.strip() == "{}"
+
+
+def test_ui_on_always_displays_a_noop_turn(tmp_path, monkeypatch, capsys):
+    fixture = tmp_path / "stop.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "session_id": "session",
+                "turn_id": "turn",
+                "cwd": str(tmp_path),
+                "hook_event_name": "Stop",
+                "stop_hook_active": False,
+                "last_assistant_message": "Diagnostic answer.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    noop = _receipt()
+    noop["turn_change_count"] = 0
+    noop["observed"]["authoritative_validation_count"] = 0
+    noop["validation"]["commands"] = []
+    monkeypatch.setenv("AGENTCHANGE_UI_ON", "always")
+    monkeypatch.setattr("agentchange.finalizer.load_finalized_receipt", lambda *_: None)
+    monkeypatch.setattr("agentchange.finalizer.finalize_turn", lambda *_: noop)
+    monkeypatch.setattr("agentchange.finalizer.claim_ui_continuation", lambda *_: True)
+    monkeypatch.setattr("agentchange.git_analysis.ensure_git_baseline", lambda *_: None)
+    assert hook_main(["finalize", "--fixture", str(fixture), "--plugin-data", str(tmp_path / "data")]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["decision"] == "block"
+    assert result["reason"].startswith("Display this concise receipt summary exactly once")
 
 
 def _plugin_source(root: Path, version: str = VERSION) -> Path:

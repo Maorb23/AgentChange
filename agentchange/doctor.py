@@ -13,6 +13,7 @@ from .environment import PlatformInfo, detect_platform, detect_python, find_exec
 from .installer import VERSION, cached_plugin_roots, plugin_fingerprint, plugin_version, stop_hook_verified
 from .slack import connectivity_description, settings
 from .state import finalization_files, latest_receipt, plugin_data_directories
+from .ui import settings as ui_settings
 
 
 def installed_version() -> str:
@@ -61,6 +62,8 @@ def collect_doctor(
         else:
             lines.extend((f"✗ {label} unavailable", f"Fix: Reinstall AgentChange {VERSION} in your user environment."))
             ready = False
+    ui_configuration = ui_settings()
+    lines.append(f"✓ UI receipts: {ui_configuration.mode} on {ui_configuration.on}")
     target = user_home / "plugins" / "agentchange"
     roots = cached_plugin_roots(user_home)
     version = plugin_version(target)
@@ -172,6 +175,7 @@ def status_lines(home: Path | None = None) -> list[str]:
         f"Installed version: {installed_version()}",
         f"Plugin version: {plugin_version(target) or 'not installed'}",
         f"Hook status: {'ready' if stop_hook_verified(target) else 'not ready'}",
+        f"UI receipts: {ui_settings().mode} on {ui_settings().on}",
         f"Slack status: {slack_state}",
         f"Latest session: {session}",
         f"Latest receipt: {receipt_label}",

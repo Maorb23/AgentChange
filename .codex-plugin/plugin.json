@@ -1,6 +1,6 @@
 {
   "name": "agentchange",
-  "version": "0.3.3",
+  "version": "0.3.5",
   "description": "Creates per-turn evidence-backed Codex change receipts.",
   "author": {
     "name": "AgentChange"
