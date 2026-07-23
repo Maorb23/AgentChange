@@ -10,16 +10,20 @@ AgentChange is an evidence and reporting tool—not a sandbox, security boundary
 
 - Python 3.11 or newer
 - Codex running on native Linux or in WSL2
+- Git
+- [uv](https://docs.astral.sh/uv/) for the recommended user installation
 - A Git repository for turn-level file attribution
 
 The current release is designed for Python projects and common Python validation workflows. Windows-native Codex agents are not supported.
 
 ## Install
 
-Install the package using your preferred Linux user-level Python package workflow. From a source checkout, an editable install is convenient during development:
+Clone the repository and install AgentChange as an isolated command-line tool:
 
 ```bash
-python -m pip install -e .
+git clone https://github.com/Maorb23/AgentChange.git
+cd AgentChange
+uv tool install .
 ```
 
 Then install and verify the Codex integration:
@@ -144,14 +148,20 @@ Finding: TEST_CLAIM_CONTRADICTION.
 
 ## Development
 
-From Linux or WSL2:
+Editable installation is intended for contributors. Create a project-local virtual environment instead of sharing one across projects:
 
 ```bash
+git clone https://github.com/Maorb23/AgentChange.git
+cd AgentChange
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install -e '.[dev]'
 python -m compileall agentchange
 pytest -q
 agentchange doctor
 ```
+
+`python -m pip install -e '.[dev]'` does not create or activate the virtual environment; run the preceding `venv` commands first.
 
 Automated Slack tests mock all network requests. Never use a real webhook in the test suite.
 
