@@ -17,7 +17,8 @@ from agentchange.hook_entry import main as hook_main
 from agentchange.installer import VERSION, install, remove_stale_agentchange_caches, stop_hook_verified
 from agentchange.normalize import normalize_envelope
 from agentchange.receipt import render_markdown, render_ui_continuation_reason, render_ui_summary
-from agentchange.slack import SlackSettings, ensure_delivery
+from agentchange.slack import SlackSettings, ensure_delivery, settings as slack_settings
+from agentchange.state import receipt_by_id
 from agentchange.ui import settings as ui_settings, should_display
 
 
@@ -686,6 +687,57 @@ def test_latest_prints_the_newest_markdown_receipt(tmp_path, monkeypatch, capsys
     assert capsys.readouterr().out == "# AgentChange Receipt\n"
 
 
+def test_receipt_by_id_matches_the_internal_identifier(tmp_path, monkeypatch):
+    turn = tmp_path / "sessions" / "session" / "turns" / "turn"
+    turn.mkdir(parents=True)
+    (turn / "receipt.json").write_text(
+        json.dumps({"receipt_id": "acr_0123456789abcdef01234567"}),
+        encoding="utf-8",
+    )
+    markdown = turn / "receipt.md"
+    markdown.write_text("# Matching receipt\n", encoding="utf-8")
+    malformed = tmp_path / "sessions" / "other" / "turns" / "turn"
+    malformed.mkdir(parents=True)
+    (malformed / "receipt.json").write_text("[]", encoding="utf-8")
+    monkeypatch.setattr("agentchange.state.plugin_data_directories", lambda: [tmp_path])
+
+    assert receipt_by_id("acr_0123456789abcdef01234567") == markdown
+    assert receipt_by_id("acr_ffffffffffffffffffffffff") is None
+
+
+def test_show_prints_a_receipt_selected_by_id(tmp_path, monkeypatch, capsys):
+    receipt = tmp_path / "receipt.md"
+    receipt.write_text("# Selected receipt\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "receipt_by_id", lambda receipt_id, suffix: receipt)
+
+    assert cli.main(["show", "acr_0123456789abcdef01234567"]) == 0
+    assert capsys.readouterr().out == "# Selected receipt\n"
+
+
+@pytest.mark.parametrize(
+    ("receipt_id", "expected_status", "expected_error"),
+    [
+        ("not-a-receipt", 2, "Invalid AgentChange receipt identifier."),
+        (
+            "acr_ffffffffffffffffffffffff",
+            1,
+            "No AgentChange receipt found for acr_ffffffffffffffffffffffff.",
+        ),
+    ],
+)
+def test_show_reports_invalid_or_missing_receipts(
+    receipt_id,
+    expected_status,
+    expected_error,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setattr(cli, "receipt_by_id", lambda receipt_id, suffix: None)
+
+    assert cli.main(["show", receipt_id]) == expected_status
+    assert capsys.readouterr().err.strip() == expected_error
+
+
 def _slack_receipt():
     return {
         "receipt_id": "acr_test",
@@ -715,6 +767,24 @@ def _settings(*, retries=1):
     return SlackSettings(True, "https://hooks.slack.com/services/T/B/SECRET", 0.2, retries)
 
 
+def test_slack_settings_default_to_full_receipts_for_changed_turns():
+    default = slack_settings({})
+    assert default.mode == "full"
+    assert default.on == "changes"
+    assert slack_settings(
+        {
+            "AGENTCHANGE_SLACK_MODE": "summary",
+            "AGENTCHANGE_SLACK_ON": "always",
+        }
+    ).mode == "summary"
+    assert slack_settings(
+        {
+            "AGENTCHANGE_SLACK_MODE": "invalid",
+            "AGENTCHANGE_SLACK_ON": "invalid",
+        }
+    ) == default
+
+
 def test_slack_dry_run_and_success(tmp_path):
     dry = tmp_path / "dry"
     dry.mkdir()
@@ -722,6 +792,60 @@ def test_slack_dry_run_and_success(tmp_path):
     live = tmp_path / "live"
     live.mkdir()
     assert ensure_delivery(tmp_path, live, _slack_receipt(), configuration=_settings(retries=0), opener=lambda *_args, **_kwargs: _Response())["state"] == "delivered"
+
+
+def test_slack_skips_unchanged_turns_without_a_network_request(tmp_path):
+    turn = tmp_path / "unchanged"
+    turn.mkdir()
+    receipt = {**_slack_receipt(), "turn_change_count": 0}
+    configuration = SlackSettings(
+        True,
+        "https://hooks.slack.com/services/T/B/SECRET",
+        0.2,
+        0,
+        mode="full",
+        on="changes",
+    )
+
+    status = ensure_delivery(
+        tmp_path,
+        turn,
+        receipt,
+        configuration=configuration,
+        opener=lambda *_args, **_kwargs: pytest.fail("Slack must not be called"),
+    )
+
+    assert status["state"] == "skipped_no_changes"
+    assert json.loads((turn / "slack_delivery.json").read_text(encoding="utf-8"))["state"] == "skipped_no_changes"
+
+
+def test_slack_full_mode_sends_the_complete_markdown_receipt(tmp_path):
+    turn = tmp_path / "full"
+    turn.mkdir()
+    requests = []
+    configuration = SlackSettings(
+        True,
+        "https://hooks.slack.com/services/T/B/SECRET",
+        0.2,
+        0,
+        mode="full",
+        on="changes",
+    )
+
+    def capture(request, **_kwargs):
+        requests.append(json.loads(request.data)["text"])
+        return _Response()
+
+    assert ensure_delivery(
+        tmp_path,
+        turn,
+        _receipt(),
+        configuration=configuration,
+        opener=capture,
+    )["state"] == "delivered"
+    assert requests[0].startswith("# AgentChange Receipt")
+    assert "## Validation results" in requests[0]
+    assert "## Integrity" in requests[0]
 
 
 @pytest.mark.parametrize(

@@ -61,6 +61,21 @@ def latest_receipt(suffix: str = "receipt.md") -> Path | None:
     return max(files, key=lambda path: path.stat().st_mtime_ns) if files else None
 
 
+def receipt_by_id(receipt_id: str, suffix: str = "receipt.md") -> Path | None:
+    matches: list[Path] = []
+    for path in receipt_files("receipt.json"):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(value, dict) or value.get("receipt_id") != receipt_id:
+            continue
+        requested = path.with_name(suffix)
+        if requested.is_file():
+            matches.append(requested)
+    return max(matches, key=lambda path: path.stat().st_mtime_ns) if matches else None
+
+
 def finalization_files() -> list[Path]:
     values: list[Path] = []
     for directory in plugin_data_directories():

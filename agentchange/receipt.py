@@ -340,7 +340,7 @@ def render_ui_summary(receipt: dict[str, Any]) -> str:
 
 def render_ui_continuation_reason(receipt: dict[str, Any], *, mode: str = "summary") -> str:
     if mode == "full":
-        return "Display this full AgentChange receipt exactly once, then stop:\n\n" + render_markdown(
+        return render_markdown(
             receipt, include_integrity=True
         )
     return render_ui_summary(receipt)

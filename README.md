@@ -55,11 +55,12 @@ Useful commands:
 ```bash
 agentchange doctor
 agentchange latest
+agentchange show acr_d9bc69f657b38aa403342248
 agentchange status
 agentchange exec --auto pytest -q tests/test_example.py
 ```
 
-`latest` prints the newest Markdown receipt. `status` summarizes installation, hook readiness, Slack state, the newest receipt, and incomplete finalizations. Runtime locations are intentionally kept as an implementation detail.
+`latest` prints the newest Markdown receipt. `show <receipt-id>` retrieves a saved receipt by the identifier shown in its UI, Markdown, JSON, and Slack representations. `status` summarizes installation, hook readiness, Slack state, the newest receipt, and incomplete finalizations. Runtime locations are intentionally kept as an implementation detail.
 
 ## What AgentChange records
 
@@ -119,9 +120,13 @@ export AGENTCHANGE_SLACK_ENABLED=true
 export AGENTCHANGE_SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...'
 export AGENTCHANGE_SLACK_TIMEOUT_SECONDS=2
 export AGENTCHANGE_SLACK_MAX_RETRIES=1
+export AGENTCHANGE_SLACK_ON=changes       # changes (default) or always
+export AGENTCHANGE_SLACK_MODE=full        # full (default) or summary
 ```
 
-With Slack disabled (the default), receipts use `dry_run`. If Slack is enabled without a webhook, the state is `not_configured`. Delivery states are `dry_run`, `delivered`, `failed_transient`, `failed_permanent`, `not_configured`, and `duplicate_suppressed`.
+By default, Slack receives the complete Markdown receipt only for turns with observed file changes. Unchanged turns remain available locally with the `skipped_no_changes` delivery state. Set `AGENTCHANGE_SLACK_ON=always` to send every finalized turn or `AGENTCHANGE_SLACK_MODE=summary` to send the compact summary.
+
+With Slack disabled (the default), receipts use `dry_run`. If Slack is enabled without a webhook, the state is `not_configured`. Delivery states are `dry_run`, `delivered`, `skipped_no_changes`, `failed_transient`, `failed_permanent`, `not_configured`, and `duplicate_suppressed`.
 
 Receipts are saved before the network request. Transient network errors, HTTP 408, 429, and 5xx responses are retried within a short total budget; permanent 4xx responses are not retried. `Retry-After` is respected where practical. A persisted attempt suppresses repeated Stop delivery, and neither saved status nor user-facing output contains the webhook URL. `agentchange doctor` validates configuration syntax but never sends a test message.
 

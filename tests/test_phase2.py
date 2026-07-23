@@ -211,6 +211,8 @@ def test_slack_acceptance_is_not_sent_twice_on_repeated_stop(tmp_path, monkeypat
     receipt = {"receipt_id": "acr_test", "risk": {"level": "low", "score": 0}, "findings": [], "validation": {"commands": []}}
     monkeypatch.setenv("AGENTCHANGE_SLACK_ENABLED", "true")
     monkeypatch.setenv("AGENTCHANGE_SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/T/B/SECRET")
+    monkeypatch.setenv("AGENTCHANGE_SLACK_MODE", "summary")
+    monkeypatch.setenv("AGENTCHANGE_SLACK_ON", "always")
     calls = []
     class Response:
         def __enter__(self): return self
@@ -235,6 +237,8 @@ def test_slack_failure_preserves_receipt_and_never_leaks_webhook(tmp_path, monke
     secret = "https://hooks.slack.com/services/T/B/SECRET"
     monkeypatch.setenv("AGENTCHANGE_SLACK_ENABLED", "true")
     monkeypatch.setenv("AGENTCHANGE_SLACK_WEBHOOK_URL", secret)
+    monkeypatch.setenv("AGENTCHANGE_SLACK_MODE", "summary")
+    monkeypatch.setenv("AGENTCHANGE_SLACK_ON", "always")
     calls = []
     def fail(request, timeout):
         calls.append(request.full_url)

@@ -17,6 +17,9 @@ from .display import sanitize_text
 from .git_analysis import atomic_json
 from .raw_capture import utc_now
 
+_MODES = {"summary", "full"}
+_ON_VALUES = {"changes", "always"}
+
 
 @dataclass(frozen=True)
 class SlackSettings:
@@ -24,12 +27,19 @@ class SlackSettings:
     webhook_url: str | None
     timeout_seconds: float
     max_retries: int
+    mode: str = "summary"
+    on: str = "always"
 
 
 def _boolean(value: str | None, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _choice(value: str | None, allowed: set[str], default: str) -> str:
+    normalized = (value or default).strip().lower()
+    return normalized if normalized in allowed else default
 
 
 def settings(environ: Mapping[str, str] | None = None) -> SlackSettings:
@@ -47,6 +57,8 @@ def settings(environ: Mapping[str, str] | None = None) -> SlackSettings:
         webhook_url=values.get("AGENTCHANGE_SLACK_WEBHOOK_URL") or None,
         timeout_seconds=max(0.1, min(timeout, 5.0)),
         max_retries=max(0, min(retries, 3)),
+        mode=_choice(values.get("AGENTCHANGE_SLACK_MODE"), _MODES, "full"),
+        on=_choice(values.get("AGENTCHANGE_SLACK_ON"), _ON_VALUES, "changes"),
     )
 
 
@@ -76,6 +88,10 @@ def display_state(state: str) -> str:
         return "Not configured"
     if state == "duplicate_suppressed":
         return "Duplicate suppressed"
+    if state == "skipped_no_changes":
+        return "Skipped — no changes"
+    if state == "pending":
+        return "Pending"
     return "Failed"
 
 
@@ -97,6 +113,14 @@ def _summary(receipt: dict[str, Any]) -> str:
         f"Main finding: {main_finding}\n"
         f"Receipt: {receipt['receipt_id']}"
     )
+
+
+def _message(receipt: dict[str, Any], mode: str) -> str:
+    if mode == "full":
+        from .receipt import render_markdown
+
+        return sanitize_text(render_markdown(receipt, include_integrity=True))
+    return _summary(receipt)
 
 
 def _retry_after_seconds(headers: Any, now: float) -> float:
@@ -143,12 +167,16 @@ def ensure_delivery(
         status = {"state": "not_configured", "attempts": 0, "updated_at": utc_now()}
         atomic_json(status_path, status)
         return status
+    if configuration.on == "changes" and not receipt.get("turn_change_count", 0):
+        status = {"state": "skipped_no_changes", "attempts": 0, "updated_at": utc_now()}
+        atomic_json(status_path, status)
+        return status
 
     opener = opener or urllib.request.urlopen
     sleeper = sleeper or time.sleep
     clock = clock or time.monotonic
     deadline = clock() + min(8.0, configuration.timeout_seconds * (configuration.max_retries + 1) + 2.0)
-    body = json.dumps({"text": _summary(receipt)}).encode("utf-8")
+    body = json.dumps({"text": _message(receipt, configuration.mode)}).encode("utf-8")
     request = urllib.request.Request(
         configuration.webhook_url,
         data=body,

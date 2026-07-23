@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path, PurePath
 
@@ -12,7 +13,9 @@ from .display import display_command
 from .doctor import collect_doctor, status_lines
 from .environment import detect_python, git_root
 from .installer import install
-from .state import latest_receipt
+from .state import latest_receipt, receipt_by_id
+
+_RECEIPT_ID = re.compile(r"^acr_[0-9a-f]{24}$")
 
 
 def resolve_auto_command(
@@ -45,6 +48,8 @@ def _parser() -> argparse.ArgumentParser:
     subparsers.add_parser("install")
     subparsers.add_parser("doctor")
     subparsers.add_parser("latest")
+    show = subparsers.add_parser("show")
+    show.add_argument("receipt_id")
     subparsers.add_parser("status")
     execute = subparsers.add_parser("exec")
     execute.add_argument("--auto", action="store_true", required=True)
@@ -66,6 +71,16 @@ def main(argv: list[str] | None = None) -> int:
         path = latest_receipt("receipt.md")
         if path is None:
             print("No AgentChange receipt has been generated yet.")
+            return 1
+        print(path.read_text(encoding="utf-8"), end="")
+        return 0
+    if args.command == "show":
+        if not _RECEIPT_ID.fullmatch(args.receipt_id):
+            print("Invalid AgentChange receipt identifier.", file=sys.stderr)
+            return 2
+        path = receipt_by_id(args.receipt_id, "receipt.md")
+        if path is None:
+            print(f"No AgentChange receipt found for {args.receipt_id}.", file=sys.stderr)
             return 1
         print(path.read_text(encoding="utf-8"), end="")
         return 0
